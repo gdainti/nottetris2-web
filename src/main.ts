@@ -609,6 +609,59 @@ touchEl.querySelectorAll<HTMLButtonElement>('button[data-a]').forEach((btn) => {
   btn.addEventListener('contextmenu', (e) => e.preventDefault());
 });
 
+// Joystick: the drag is measured from where the thumb first lands, so it works without aiming
+// at the centre. Past a small dead zone, sideways means left/right and downward means down
+// (a diagonal drag does both).
+{
+  const stick = document.getElementById('stick')!;
+  const knob = stick.querySelector<HTMLElement>('.knob')!;
+  let pointer: number | null = null;
+  let ox = 0;
+  let oy = 0;
+  const set = (left: boolean, right: boolean, down: boolean) => {
+    setTouch('left', left);
+    setTouch('right', right);
+    setTouch('down', down);
+  };
+  const move = (e: PointerEvent) => {
+    if (e.pointerId !== pointer) return;
+    const max = stick.clientWidth / 2 - knob.offsetWidth / 4;
+    let dx = e.clientX - ox;
+    let dy = e.clientY - oy;
+    const len = Math.hypot(dx, dy);
+    if (len > max) {
+      dx *= max / len;
+      dy *= max / len;
+    }
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    const dead = max * 0.3;
+    // Down needs the drag to point at least ~30° below horizontal, so a sideways drag that sags a
+    // little does not also push down.
+    set(dx < -dead, dx > dead, dy > dead && dy > Math.abs(dx) * 0.6);
+  };
+  const end = (e: PointerEvent) => {
+    if (e.pointerId !== pointer) return;
+    pointer = null;
+    stick.classList.remove('active');
+    knob.style.transform = '';
+    set(false, false, false);
+  };
+  stick.addEventListener('pointerdown', (e) => {
+    if (pointer !== null) return;
+    e.preventDefault();
+    pointer = e.pointerId;
+    stick.setPointerCapture(e.pointerId);
+    stick.classList.add('active');
+    ox = e.clientX;
+    oy = e.clientY;
+  });
+  stick.addEventListener('pointermove', move);
+  stick.addEventListener('pointerup', end);
+  stick.addEventListener('pointercancel', end);
+  stick.addEventListener('lostpointercapture', end);
+  stick.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
 // ------------------------------------------------------------------ loop
 
 const DEMO_AT = { x: (SINGLE_W - 328) / 2, y: 32 };

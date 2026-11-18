@@ -84,7 +84,7 @@ body {
   color-scheme: light;
 }
 
-:root[data-theme='retro'] :is(.menu, .item, .opt, .back, .bar, .fill, .kbd, #pausebtn, #toast, .namefield input, #touch button) {
+:root[data-theme='retro'] :is(.menu, .item, .opt, .back, .bar, .fill, .kbd, #pausebtn, #toast, .namefield input, #touch button, #stick, #stick .knob) {
   border-radius: 0;
 }
 
@@ -693,9 +693,10 @@ table.board td.sub {
 /* ------------------------------------------------------------ touch controls */
 
 #touch {
-  /* Button size: 64px when there is room, shrinking so the widest row (four buttons) fits on
-     narrow phones. 64px = 16px side padding x2 + two 10px cluster gaps + the 12px gap between clusters. */
-  --btn: clamp(44px, (100vw - 64px) / 4, 64px);
+  /* Button size: 64px when there is room, shrinking so the joystick (1.9 buttons wide) and the two
+     rotate buttons fit on narrow phones. 54px = 16px side padding x2 + the 10px gap between the
+     rotate buttons + the 12px gap between joystick and buttons. */
+  --btn: clamp(44px, (100vw - 54px) / 3.9, 64px);
   width: 100%;
   max-width: 640px;
   display: flex;
@@ -714,18 +715,35 @@ table.board td.sub {
   gap: 10px;
 }
 
-/* Left and right side by side, down centred below them: a triangle. The negative row gap tucks
-   down up between the two round buttons (they still don't overlap) to keep the controls short,
-   since the field is sized to the height left above them. */
-#touch .dpad {
-  display: grid;
-  grid-template-columns: repeat(2, var(--btn));
-  gap: calc(var(--btn) * -0.15) 10px;
+/* Joystick: drag from wherever the thumb lands; the knob follows, held inside the ring. */
+#stick {
+  --size: calc(var(--btn) * 1.9);
+  position: relative;
+  width: var(--size);
+  height: var(--size);
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: rgba(var(--tint), 0.04);
+  touch-action: none;
 }
 
-#touch .dpad [data-a='down'] {
-  grid-column: 1 / -1;
-  justify-self: center;
+#stick .knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--btn);
+  height: var(--btn);
+  margin: calc(var(--btn) / -2) 0 0 calc(var(--btn) / -2);
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: rgba(var(--tint), 0.1);
+  pointer-events: none;
+}
+
+#stick.active .knob {
+  background: rgba(var(--glow), 0.25);
+  border-color: var(--accent);
 }
 
 #touch button {
