@@ -709,6 +709,12 @@ table.board td.sub {
   display: none;
 }
 
+/* Paused: shown dimmed and inert, so nothing is held down on resume. */
+#touch.paused {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 /* The move control goes on the left by default; "Move with: Right hand" swaps the sides. */
 #touch[data-side='right'] {
   flex-direction: row-reverse;

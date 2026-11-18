@@ -128,12 +128,19 @@ function applyTouchLayout() {
 applyTouchLayout();
 
 function updateTouch() {
-  const show = isCoarse && state === 'game' && game?.type === 'single';
+  // Still shown while paused, so the board keeps its size and Options changes show at once.
+  const show = isCoarse && (state === 'game' || state === 'paused') && game?.type === 'single';
+  const live = show && state === 'game';
   if (touchEl.hidden === show) {
     touchEl.hidden = !show;
     fit();
   }
-  if (!show) clearTouch();
+  touchEl.classList.toggle('paused', !live);
+  if (!live) {
+    // Let go of any control a thumb is still on, so none is stuck held after resuming.
+    touchEl.querySelectorAll('button, #stick, #spin').forEach((el) => el.dispatchEvent(new Event('release')));
+    clearTouch();
+  }
   updateHud();
 }
 
@@ -652,6 +659,7 @@ touchEl.querySelectorAll<HTMLButtonElement>('button[data-a]').forEach((btn) => {
     btn.classList.remove('down');
     setTouch(action, false);
   };
+  btn.addEventListener('release', off);
   btn.addEventListener('pointerdown', on);
   btn.addEventListener('pointerup', off);
   btn.addEventListener('pointercancel', off);
@@ -688,13 +696,15 @@ function ramp(t: number, dead: number) {
     // Down has the bigger dead zone, so a sideways drag that sags a little does not also drop.
     setTouchMove({ x: ramp(dx / max, 0.15), y: ramp(Math.max(0, dy) / max, 0.3) });
   };
-  const end = (e: PointerEvent) => {
-    if (e.pointerId !== pointer) return;
+  const end = (e: PointerEvent | Event) => {
+    if (pointer === null || (e instanceof PointerEvent && e.pointerId !== pointer)) return;
+    if (stick.hasPointerCapture(pointer)) stick.releasePointerCapture(pointer);
     pointer = null;
     stick.classList.remove('active');
     knob.style.transform = '';
     setTouchMove(null);
   };
+  stick.addEventListener('release', end);
   stick.addEventListener('pointerdown', (e) => {
     if (pointer !== null) return;
     e.preventDefault();
@@ -736,13 +746,15 @@ function ramp(t: number, dead: number) {
     knob.style.transform = `translateX(${dx}px)`;
     setTouchSpin(ramp(dx / max, 0.08));
   });
-  const end = (e: PointerEvent) => {
-    if (e.pointerId !== pointer) return;
+  const end = (e: PointerEvent | Event) => {
+    if (pointer === null || (e instanceof PointerEvent && e.pointerId !== pointer)) return;
+    if (track.hasPointerCapture(pointer)) track.releasePointerCapture(pointer);
     pointer = null;
     track.classList.remove('active');
     knob.style.transform = '';
     setTouchSpin(null);
   };
+  track.addEventListener('release', end);
   track.addEventListener('pointerup', end);
   track.addEventListener('pointercancel', end);
   track.addEventListener('lostpointercapture', end);
