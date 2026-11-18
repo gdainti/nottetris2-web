@@ -23,6 +23,8 @@ export interface Controls {
   down: boolean;
   rotL: boolean;
   rotR: boolean;
+  /** Analog spin from the touch slider, -1 (full left) to 1 (full right); overrides rotL/rotR when set. */
+  spin?: number;
 }
 
 export const NO_CONTROLS: Controls = { left: false, right: false, down: false, rotL: false, rotR: false };
@@ -295,8 +297,15 @@ export class Field {
   private applyControls(dt: number, k: Controls) {
     const body = this.active!.body;
     const spin = body.getAngularVelocity();
-    if (k.rotR && spin < C.MAX_SPIN) body.applyTorque(C.TORQUE, true);
-    if (k.rotL && spin > -C.MAX_SPIN) body.applyTorque(-C.TORQUE, true);
+    if (k.spin !== undefined) {
+      // Steer the spin towards the asked-for speed with up to the usual torque, so holding the
+      // slider still (at 0) brakes the piece to a stop.
+      const err = k.spin * C.MAX_SPIN - spin;
+      body.applyTorque(C.TORQUE * Math.max(-1, Math.min(1, err / C.SPIN_EASE)), true);
+    } else {
+      if (k.rotR && spin < C.MAX_SPIN) body.applyTorque(C.TORQUE, true);
+      if (k.rotL && spin > -C.MAX_SPIN) body.applyTorque(-C.TORQUE, true);
+    }
 
     const centre = body.getWorldCenter();
     if (k.left) body.applyForce(Vec2(-C.SIDE_FORCE, 0), centre, true);

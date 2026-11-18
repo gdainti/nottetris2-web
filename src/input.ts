@@ -1,6 +1,6 @@
 import type { Controls } from './field';
 
-type Action = keyof Controls;
+type Action = Exclude<keyof Controls, 'spin'>;
 type KeyMap = Record<Action, string[]>;
 
 // Rotation is on Z / X, or J / K to pair with WASD; Up does nothing during play.
@@ -32,6 +32,8 @@ const held = new Set<string>();
 /** Keys still held from a menu press: ignored by the game until released (controls.held in the original). */
 const suppressed = new Set<string>();
 const touch = new Set<Action>();
+/** The touch spin slider, -1..1, or null while it is not being touched. */
+let touchSpin: number | null = null;
 
 window.addEventListener('keydown', (e) => held.add(e.code));
 window.addEventListener('keyup', (e) => {
@@ -42,6 +44,7 @@ window.addEventListener('blur', () => {
   held.clear();
   suppressed.clear();
   touch.clear();
+  touchSpin = null;
 });
 
 export function suppressHeldKeys() {
@@ -111,8 +114,13 @@ export function setTouch(action: Action, on: boolean) {
   else touch.delete(action);
 }
 
+export function setTouchSpin(spin: number | null) {
+  touchSpin = spin;
+}
+
 export function clearTouch() {
   touch.clear();
+  touchSpin = null;
 }
 
 // ---------------------------------------------------------------- combined
@@ -140,7 +148,9 @@ export function singleControls(): Controls {
     rotL: touch.has('rotL'),
     rotR: touch.has('rotR'),
   };
-  return or(or(fromKeys(KEYS_SINGLE), padControls(0)), t);
+  const c = or(or(fromKeys(KEYS_SINGLE), padControls(0)), t);
+  if (touchSpin !== null) c.spin = touchSpin;
+  return c;
 }
 
 export function versusControls(player: 0 | 1): Controls {

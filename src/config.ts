@@ -14,6 +14,7 @@ export const SIDE_FORCE = 70; // N   (blockforce = 70*meter)
 export const DOWN_FORCE = 20; // N   (blockdownforce = 20*meter)
 export const TORQUE = 70; // N·m (blocktorque = 70*meter*meter)
 export const MAX_SPIN = 3; // rad/s, torque only applied below this
+export const SPIN_EASE = 1; // rad/s: the analog spin control eases off its torque within this of its target
 export const BASE_SPEED = 100; // px/s fall speed at level 0
 export const SPEED_PER_LEVEL = 7; // px/s per level
 export const MAX_DROP_SPEED = 500; // px/s while holding down
