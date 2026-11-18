@@ -31,6 +31,8 @@ export const KEYS_P2: KeyMap = {
 const held = new Set<string>();
 /** Keys still held from a menu press: ignored by the game until released (controls.held in the original). */
 const suppressed = new Set<string>();
+/** On-screen buttons held down. */
+const touch = new Set<Action>();
 /** The touch spin slider, -1..1, or null while it is not being touched. */
 let touchSpin: number | null = null;
 /** The touch joystick: x -1..1 sideways, y 0..1 down; null while it is not being touched. */
@@ -44,6 +46,7 @@ window.addEventListener('keyup', (e) => {
 window.addEventListener('blur', () => {
   held.clear();
   suppressed.clear();
+  touch.clear();
   touchSpin = null;
   touchMove = null;
 });
@@ -114,11 +117,17 @@ export function setTouchSpin(spin: number | null) {
   touchSpin = spin;
 }
 
+export function setTouch(action: Action, on: boolean) {
+  if (on) touch.add(action);
+  else touch.delete(action);
+}
+
 export function setTouchMove(move: { x: number; y: number } | null) {
   touchMove = move;
 }
 
 export function clearTouch() {
+  touch.clear();
   touchSpin = null;
   touchMove = null;
 }
@@ -141,7 +150,14 @@ function or(a: Controls, b: Controls): Controls {
 }
 
 export function singleControls(): Controls {
-  const c = or(fromKeys(KEYS_SINGLE), padControls(0));
+  const t: Controls = {
+    left: touch.has('left'),
+    right: touch.has('right'),
+    down: touch.has('down'),
+    rotL: touch.has('rotL'),
+    rotR: touch.has('rotR'),
+  };
+  const c = or(or(fromKeys(KEYS_SINGLE), padControls(0)), t);
   if (touchSpin !== null) c.spin = touchSpin;
   if (touchMove) {
     c.moveX = touchMove.x;

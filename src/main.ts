@@ -4,7 +4,7 @@ import { STEP } from './config';
 import { Demo } from './demo';
 import { logoHtml } from './logo';
 import { H, SINGLE_W, SingleGame, VersusGame } from './games';
-import { clearTouch, pollPadPresses, setTouchMove, setTouchSpin, suppressHeldKeys } from './input';
+import { clearTouch, pollPadPresses, setTouch, setTouchMove, setTouchSpin, suppressHeldKeys } from './input';
 import { COLORS, drawBackground, drawField, setTheme } from './render';
 import { ANON, type Boards, fetchBoards, NAME_MAX, normalizeName, recordGame, submitScore, type Submitted } from './api';
 import {
@@ -13,9 +13,11 @@ import {
   addHighScore,
   highScores,
   loadSettings,
+  MOVE_SIDES,
   qualifies,
   saveSettings,
   TABLE_SIZE,
+  TOUCH_CONTROLS,
 } from './storage';
 import { Menu, esc } from './ui';
 
@@ -114,6 +116,16 @@ function setLayout(w: number) {
     fit();
   }
 }
+
+/** Applies the touch control settings: which controls to show, and the move control's side. */
+function applyTouchLayout() {
+  touchEl.dataset.controls = settings.touchControls;
+  touchEl.dataset.side = settings.moveSide;
+  clearTouch();
+  // The two kinds of controls differ in height, and the field is sized to the room above them.
+  if (!touchEl.hidden) fit();
+}
+applyTouchLayout();
 
 function updateTouch() {
   const show = isCoarse && state === 'game' && game?.type === 'single';
@@ -370,6 +382,33 @@ function showOptions(back: () => void) {
           applyTheme();
         },
       },
+      // The on-screen controls only appear on touch screens, so only they get these settings.
+      ...(isCoarse
+        ? [
+            {
+              type: 'choice' as const,
+              label: 'Touch controls',
+              options: ['Joystick', 'Buttons'],
+              get: () => TOUCH_CONTROLS.indexOf(settings.touchControls),
+              set: (i: number) => {
+                settings.touchControls = TOUCH_CONTROLS[i];
+                saveSettings(settings);
+                applyTouchLayout();
+              },
+            },
+            {
+              type: 'choice' as const,
+              label: 'Move with',
+              options: ['Left hand', 'Right hand'],
+              get: () => MOVE_SIDES.indexOf(settings.moveSide),
+              set: (i: number) => {
+                settings.moveSide = MOVE_SIDES[i];
+                saveSettings(settings);
+                applyTouchLayout();
+              },
+            },
+          ]
+        : []),
       { type: 'button', label: 'Toggle fullscreen', keyLabel: 'F', action: toggleFullscreen },
     ],
     footer: 'M mutes sound at any time.',
@@ -600,6 +639,25 @@ window.addEventListener('blur', () => pause());
 // Keep the button from taking keyboard focus, so Space/Enter never "click" it again later.
 pauseBtn.addEventListener('pointerdown', (e) => e.preventDefault());
 pauseBtn.addEventListener('click', () => pause());
+
+touchEl.querySelectorAll<HTMLButtonElement>('button[data-a]').forEach((btn) => {
+  const action = btn.dataset.a as 'left' | 'right' | 'down' | 'rotL' | 'rotR';
+  const on = (e: PointerEvent) => {
+    e.preventDefault();
+    btn.setPointerCapture(e.pointerId);
+    btn.classList.add('down');
+    setTouch(action, true);
+  };
+  const off = () => {
+    btn.classList.remove('down');
+    setTouch(action, false);
+  };
+  btn.addEventListener('pointerdown', on);
+  btn.addEventListener('pointerup', off);
+  btn.addEventListener('pointercancel', off);
+  btn.addEventListener('lostpointercapture', off);
+  btn.addEventListener('contextmenu', (e) => e.preventDefault());
+});
 
 /** Analog stick response: 0 inside the dead zone, then rising linearly to ±1 at full travel. */
 function ramp(t: number, dead: number) {

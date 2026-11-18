@@ -84,7 +84,7 @@ body {
   color-scheme: light;
 }
 
-:root[data-theme='retro'] :is(.menu, .item, .opt, .back, .bar, .fill, .kbd, #pausebtn, #toast, .namefield input, #spin, #stick, #stick .knob, #spin .knob) {
+:root[data-theme='retro'] :is(.menu, .item, .opt, .back, .bar, .fill, .kbd, #pausebtn, #toast, .namefield input, #touch button, #spin, #stick, #stick .knob, #spin .knob) {
   border-radius: 0;
 }
 
@@ -707,6 +707,58 @@ table.board td.sub {
 
 #touch[hidden] {
   display: none;
+}
+
+/* The move control goes on the left by default; "Move with: Right hand" swaps the sides. */
+#touch[data-side='right'] {
+  flex-direction: row-reverse;
+}
+
+/* Joystick and spin slider, or the buttons: only one set shows. */
+#touch:not([data-controls='buttons']) .buttons,
+#touch[data-controls='buttons'] .drag {
+  display: none;
+}
+
+#touch[data-controls='buttons'] {
+  /* Button size: the widest row is four buttons. 64px = 16px side padding x2 + two 10px gaps
+     between buttons + the 12px gap between the groups. */
+  --btn: clamp(44px, (100vw - 64px) / 4, 64px);
+}
+
+#touch .cluster {
+  display: flex;
+  gap: 10px;
+}
+
+/* Left and right side by side, down centred below them: a triangle. The negative row gap tucks
+   down up between the two round buttons (they still don't overlap) to keep the controls short,
+   since the field is sized to the height left above them. */
+#touch .dpad {
+  display: grid;
+  grid-template-columns: repeat(2, var(--btn));
+  gap: calc(var(--btn) * -0.15) 10px;
+}
+
+#touch .dpad [data-a='down'] {
+  grid-column: 1 / -1;
+  justify-self: center;
+}
+
+#touch button {
+  width: var(--btn);
+  height: var(--btn);
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: rgba(var(--tint), 0.06);
+  color: var(--text);
+  font-size: calc(var(--btn) * 0.4);
+  touch-action: none;
+}
+
+#touch button.down {
+  background: rgba(var(--glow), 0.25);
+  border-color: var(--accent);
 }
 
 /* Joystick: drag from wherever the thumb lands; the knob follows, held inside the ring. */

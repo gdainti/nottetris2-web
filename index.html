@@ -25,13 +25,26 @@
         <div id="overlay" hidden></div>
       </div>
       <div id="touch" hidden>
-        <div id="spin" role="group" aria-label="Rotate: slide left or right">
-          <span class="hint">⟲</span>
-          <span class="hint">⟳</span>
-          <div class="knob"></div>
+        <div class="side move">
+          <div id="stick" class="drag" role="group" aria-label="Move: drag left, right or down">
+            <div class="knob"></div>
+          </div>
+          <div class="cluster dpad buttons">
+            <button data-a="left" aria-label="Move left">◀</button>
+            <button data-a="right" aria-label="Move right">▶</button>
+            <button data-a="down" aria-label="Push down">▼</button>
+          </div>
         </div>
-        <div id="stick" role="group" aria-label="Move: drag left, right or down">
-          <div class="knob"></div>
+        <div class="side turn">
+          <div id="spin" class="drag" role="group" aria-label="Rotate: slide left or right">
+            <span class="hint">⟲</span>
+            <span class="hint">⟳</span>
+            <div class="knob"></div>
+          </div>
+          <div class="cluster buttons">
+            <button data-a="rotL" aria-label="Rotate left">⟲</button>
+            <button data-a="rotR" aria-label="Rotate right">⟳</button>
+          </div>
         </div>
       </div>
     </div>
