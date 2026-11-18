@@ -1,6 +1,6 @@
 import type { Controls } from './field';
 
-type Action = Exclude<keyof Controls, 'spin'>;
+type Action = Exclude<keyof Controls, 'spin' | 'moveX' | 'drop'>;
 type KeyMap = Record<Action, string[]>;
 
 // Rotation is on Z / X, or J / K to pair with WASD; Up does nothing during play.
@@ -31,9 +31,12 @@ export const KEYS_P2: KeyMap = {
 const held = new Set<string>();
 /** Keys still held from a menu press: ignored by the game until released (controls.held in the original). */
 const suppressed = new Set<string>();
+/** On-screen buttons held down. */
 const touch = new Set<Action>();
 /** The touch spin slider, -1..1, or null while it is not being touched. */
 let touchSpin: number | null = null;
+/** The touch joystick: x -1..1 sideways, y 0..1 down; null while it is not being touched. */
+let touchMove: { x: number; y: number } | null = null;
 
 window.addEventListener('keydown', (e) => held.add(e.code));
 window.addEventListener('keyup', (e) => {
@@ -45,6 +48,7 @@ window.addEventListener('blur', () => {
   suppressed.clear();
   touch.clear();
   touchSpin = null;
+  touchMove = null;
 });
 
 export function suppressHeldKeys() {
@@ -109,18 +113,23 @@ export function pollPadPresses(onPress: (code: string) => void) {
 
 // ---------------------------------------------------------------- touch
 
+export function setTouchSpin(spin: number | null) {
+  touchSpin = spin;
+}
+
 export function setTouch(action: Action, on: boolean) {
   if (on) touch.add(action);
   else touch.delete(action);
 }
 
-export function setTouchSpin(spin: number | null) {
-  touchSpin = spin;
+export function setTouchMove(move: { x: number; y: number } | null) {
+  touchMove = move;
 }
 
 export function clearTouch() {
   touch.clear();
   touchSpin = null;
+  touchMove = null;
 }
 
 // ---------------------------------------------------------------- combined
@@ -150,6 +159,10 @@ export function singleControls(): Controls {
   };
   const c = or(or(fromKeys(KEYS_SINGLE), padControls(0)), t);
   if (touchSpin !== null) c.spin = touchSpin;
+  if (touchMove) {
+    c.moveX = touchMove.x;
+    c.drop = touchMove.y;
+  }
   return c;
 }
 

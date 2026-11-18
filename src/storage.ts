@@ -12,7 +12,16 @@ export interface Settings {
   theme: ThemeName;
   /** Last name entered for the leaderboard, offered again next time */
   name: string;
+  /** On-screen controls on touch screens: joystick and spin slider, or buttons */
+  touchControls: TouchControls;
+  /** Which side of the screen the move control goes on; rotation takes the other */
+  moveSide: MoveSide;
 }
+
+export type TouchControls = 'drag' | 'buttons';
+export type MoveSide = 'left' | 'right';
+export const TOUCH_CONTROLS: TouchControls[] = ['drag', 'buttons'];
+export const MOVE_SIDES: MoveSide[] = ['left', 'right'];
 
 export interface ScoreEntry {
   name: string;
@@ -23,7 +32,17 @@ const SETTINGS_KEY = 'slicefall.settings.v1';
 const SCORES_KEY = 'slicefall.scores.v1';
 export const TABLE_SIZE = 5;
 
-const DEFAULT_SETTINGS: Settings = { sfx: 0.8, music: 0.6, track: 0, mode: 'cut', muted: false, theme: 'modern', name: '' };
+const DEFAULT_SETTINGS: Settings = {
+  sfx: 0.8,
+  music: 0.6,
+  track: 0,
+  mode: 'cut',
+  muted: false,
+  theme: 'modern',
+  name: '',
+  touchControls: 'drag',
+  moveSide: 'left',
+};
 
 function read<T>(key: string): T | null {
   try {
@@ -46,6 +65,8 @@ export function loadSettings(): Settings {
   const s = { ...DEFAULT_SETTINGS, ...(read<Partial<Settings>>(SETTINGS_KEY) ?? {}) };
   // A mode that no longer exists (Stack) falls back to the default
   if (!GAME_MODES.includes(s.mode)) s.mode = DEFAULT_SETTINGS.mode;
+  if (!TOUCH_CONTROLS.includes(s.touchControls)) s.touchControls = DEFAULT_SETTINGS.touchControls;
+  if (!MOVE_SIDES.includes(s.moveSide)) s.moveSide = DEFAULT_SETTINGS.moveSide;
   return s;
 }
 
