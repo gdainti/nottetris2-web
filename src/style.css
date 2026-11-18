@@ -780,10 +780,25 @@ table.board td.sub {
   touch-action: none;
 }
 
-/* Spin slider: a pill the knob slides along, with the rotate directions marked at each end. */
+/* With the joystick, the rotation side takes all the width the joystick leaves, so the spin
+   slider is as long as fits: a longer slide gives finer control over the spin speed. */
+#touch:not([data-controls='buttons']) .turn {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+}
+
+#touch[data-side='right']:not([data-controls='buttons']) .turn {
+  justify-content: flex-start;
+}
+
+/* Spin slider: a pill the knob slides along, with the rotate directions marked at each end. At
+   least 2.6 knobs long (what the knob size is worked out from), at most 5. */
 #spin {
   position: relative;
-  width: calc(var(--btn) * 2.6);
+  width: 100%;
+  min-width: calc(var(--btn) * 2.6);
+  max-width: calc(var(--btn) * 5);
   height: var(--btn);
   flex: none;
   display: flex;
