@@ -36,12 +36,20 @@ export interface GameRecord extends GameStats {
 /** A player id: 32 lowercase hex digits (128 random bits). */
 const PLAYER_ID = /^[0-9a-f]{32}$/;
 
+const badPlayer = (player: unknown) => player !== undefined && (typeof player !== 'string' || !PLAYER_ID.test(player));
+const PLAYER_ERROR = 'player must be 32 lowercase hex digits';
+
 /** A leaderboard entry (POST /api/scores). */
 export interface Submission extends GameStats {
   name: string;
   /** The game-log row this score came from, so that row gets the player's name too */
   gameId?: number;
+  /** The browser's random player id (see GameRecord), so the name can be tied to it */
+  player?: string;
 }
+
+/** The shared name the game sends when the player leaves it blank (src/api.ts). Not tied to ids. */
+export const ANON = 'ANON';
 
 type Checked<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -101,11 +109,13 @@ export function validate(body: unknown): Checked<Submission> {
   if (b.gameId !== undefined && !isInt(b.gameId, 1, Number.MAX_SAFE_INTEGER)) {
     return { ok: false, error: 'gameId must be a positive whole number' };
   }
+  if (badPlayer(b.player)) return { ok: false, error: PLAYER_ERROR };
 
   const stats = checkStats(b);
   if (!stats.ok) return stats;
   const value: Submission = { ...stats.value, name };
   if (b.gameId !== undefined) value.gameId = b.gameId as number;
+  if (b.player !== undefined) value.player = b.player as string;
   return { ok: true, value };
 }
 
@@ -129,11 +139,9 @@ export function validateGame(body: unknown): Checked<GameRecord> {
   if (!fits) return { ok: false, error: 'cuts and bestCut do not match lines' };
 
   const { player } = b;
-  if (player !== undefined && (typeof player !== 'string' || !PLAYER_ID.test(player))) {
-    return { ok: false, error: 'player must be 32 lowercase hex digits' };
-  }
+  if (badPlayer(player)) return { ok: false, error: PLAYER_ERROR };
 
-  return { ok: true, value: { ...stats.value, cuts, bestCut, ...(player !== undefined ? { player } : {}) } };
+  return { ok: true, value: { ...stats.value, cuts, bestCut, ...(player !== undefined ? { player: player as string } : {}) } };
 }
 
 /** Start of the current leaderboard week: Monday 00:00 UTC. */

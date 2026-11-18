@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { GameRecord, Mode, Submission } from './scores.ts';
+import { ANON, type GameRecord, type Mode, type Submission } from './scores.ts';
 
 export interface BoardEntry {
   rank: number;
@@ -75,10 +75,22 @@ const MIGRATIONS = [
    CREATE INDEX game_by_time  ON game (created_at);
    CREATE INDEX game_by_score ON game (score_id);`,
 
-  // A random id the browser keeps, so one player's games can be followed, named or not. NULL for
-  // games logged before it existed, or sent by a client without it.
+  // A random id the browser keeps, so one player's games and scores can be followed, named or not.
+  // NULL for rows from before it existed, or sent by a client without it. player_name ties each id
+  // to the names it has submitted scores under (not the shared ANON), and a name to its ids.
   `ALTER TABLE game ADD COLUMN player TEXT;
-   CREATE INDEX game_by_player ON game (player, created_at);`,
+   CREATE INDEX game_by_player ON game (player, created_at);
+   ALTER TABLE score ADD COLUMN player TEXT;
+   CREATE INDEX score_by_player ON score (player);
+   CREATE TABLE player_name (
+     player   TEXT    NOT NULL,
+     name     TEXT    NOT NULL,
+     scores   INTEGER NOT NULL, -- scores submitted with this id and name
+     first_at INTEGER NOT NULL, -- unix ms
+     last_at  INTEGER NOT NULL, -- unix ms
+     PRIMARY KEY (player, name)
+   ) WITHOUT ROWID;
+   CREATE INDEX player_name_by_name ON player_name (name);`,
 ];
 
 export interface GameTotals {
@@ -124,25 +136,63 @@ export class ScoreDb {
 
   /**
    * Adds a leaderboard score. With a gameId, that game-log row gets the name too, but only if it is
-   * still unnamed and its numbers match: a score can't rename someone else's game.
+   * still unnamed, from the same player id and its numbers match: a score can't rename someone
+   * else's game. With a player id (and a name of their own, not ANON), the pair is recorded.
    */
   add(s: Submission, at: Date): number {
-    const r = this.sql
-      .prepare(
-        `INSERT INTO score (mode, name, score, lines, level, pieces, duration_ms, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(s.mode, s.name, s.score, s.lines, s.level, s.pieces, s.durationMs, at.getTime());
-    const id = Number(r.lastInsertRowid);
-    if (s.gameId !== undefined) {
-      this.sql
+    const player = s.player ?? null;
+    this.sql.exec('BEGIN');
+    try {
+      const r = this.sql
         .prepare(
-          `UPDATE game SET name = ?, score_id = ?
-           WHERE id = ? AND name IS NULL AND mode = ? AND score = ? AND lines = ? AND pieces = ? AND duration_ms = ?`,
+          `INSERT INTO score (mode, name, player, score, lines, level, pieces, duration_ms, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(s.name, id, s.gameId, s.mode, s.score, s.lines, s.pieces, s.durationMs);
+        .run(s.mode, s.name, player, s.score, s.lines, s.level, s.pieces, s.durationMs, at.getTime());
+      const id = Number(r.lastInsertRowid);
+      if (s.gameId !== undefined) {
+        this.sql
+          .prepare(
+            `UPDATE game SET name = ?, score_id = ?
+             WHERE id = ? AND name IS NULL AND player IS ?
+               AND mode = ? AND score = ? AND lines = ? AND pieces = ? AND duration_ms = ?`,
+          )
+          .run(s.name, id, s.gameId, player, s.mode, s.score, s.lines, s.pieces, s.durationMs);
+      }
+      if (player !== null && s.name !== ANON) {
+        this.sql
+          .prepare(
+            `INSERT INTO player_name (player, name, scores, first_at, last_at) VALUES (?, ?, 1, ?, ?)
+             ON CONFLICT (player, name) DO UPDATE SET scores = scores + 1, last_at = excluded.last_at`,
+          )
+          .run(player, s.name, at.getTime(), at.getTime());
+      }
+      this.sql.exec('COMMIT');
+      return id;
+    } catch (e) {
+      this.sql.exec('ROLLBACK');
+      throw e;
     }
-    return id;
+  }
+
+  /** The names a player id has submitted scores under, most recent first (for the admin script). */
+  namesOf(prefix: string) {
+    return this.sql
+      .prepare(
+        `SELECT player, name, scores, first_at, last_at FROM player_name
+         WHERE player >= ? AND player < ? ORDER BY last_at DESC`,
+      )
+      .all(prefix, `${prefix}g`);
+  }
+
+  /** The player ids a name has been submitted from, most recent first (for the admin script). */
+  playersOf(name: string) {
+    return this.sql
+      .prepare(
+        `SELECT player, name, scores, first_at, last_at FROM player_name
+         WHERE name = ? ORDER BY last_at DESC`,
+      )
+      .all(name);
   }
 
   /** Logs a finished game, scored or not. */
@@ -254,7 +304,7 @@ export class ScoreDb {
   /** Every score a name has, newest first (for the admin script). */
   byName(name: string) {
     return this.sql
-      .prepare('SELECT id, mode, name, score, lines, created_at FROM score WHERE name = ? ORDER BY created_at DESC')
+      .prepare('SELECT id, mode, name, player, score, lines, created_at FROM score WHERE name = ? ORDER BY created_at DESC')
       .all(name);
   }
 
@@ -268,9 +318,10 @@ export class ScoreDb {
     return Number(this.sql.prepare('DELETE FROM score WHERE id = ?').run(id).changes) > 0;
   }
 
-  /** Removes a player's scores and takes their name off their games (the games still count). */
+  /** Removes a player's scores and takes their name off their games and ids (the games still count). */
   removeName(name: string): number {
     this.sql.prepare('UPDATE game SET name = NULL WHERE name = ?').run(name);
+    this.sql.prepare('DELETE FROM player_name WHERE name = ?').run(name);
     return Number(this.sql.prepare('DELETE FROM score WHERE name = ?').run(name).changes);
   }
 

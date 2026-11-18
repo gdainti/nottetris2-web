@@ -166,7 +166,7 @@ describe('game log', () => {
     const b1 = db.addGame(played({ player: bob }), at);
     const a2 = db.addGame(played({ player: ann, score: 300 }), new Date(at.getTime() + 60_000));
     db.addGame(played(), at); // an older client: no id
-    db.add(cut({ name: 'ANN', gameId: a1 }), at);
+    db.add(cut({ name: 'ANN', gameId: a1, player: ann }), at);
 
     assert.deepEqual(
       db.gamesByPlayer(ann).map((g) => [g.id, g.name]),
@@ -181,6 +181,48 @@ describe('game log', () => {
     );
     assert.deepEqual(db.gamesByPlayer('c'), []);
     assert.equal(db.gameTotals(null).devices, 2);
+    db.close();
+  });
+
+  test('a score ties its name to the player id; ANON does not', () => {
+    const db = new ScoreDb(':memory:');
+    const ann = 'aaaa0000000000000000000000000000';
+    const phone = 'cccc0000000000000000000000000000';
+    const t = (min: number) => new Date(at.getTime() + min * 60_000);
+    db.add(cut({ name: 'ANN', player: ann }), t(0));
+    db.add(cut({ name: 'ANN', player: ann, score: 700 }), t(5));
+    db.add(cut({ name: 'ANNIE', player: ann }), t(10));
+    db.add(cut({ name: 'ANN', player: phone }), t(20));
+    db.add(cut({ name: 'ANON', player: ann }), t(30));
+    db.add(cut({ name: 'ANN' }), t(40)); // an older client: no id, no pair
+
+    const pairs = (rows: Record<string, unknown>[]) => rows.map((r) => [r.player, r.name, r.scores, r.first_at, r.last_at]);
+    assert.deepEqual(pairs(db.namesOf('aaaa')), [
+      [ann, 'ANNIE', 1, t(10).getTime(), t(10).getTime()],
+      [ann, 'ANN', 2, t(0).getTime(), t(5).getTime()],
+    ]);
+    assert.deepEqual(
+      db.playersOf('ANN').map((r) => r.player),
+      [phone, ann],
+    );
+    assert.deepEqual(db.playersOf('ANON'), []);
+    assert.equal(db.sql.prepare('SELECT COUNT(*) AS n FROM score WHERE player = ?').get(ann)!.n, 4); // ANON's score keeps the id
+
+    db.removeName('ANN');
+    assert.deepEqual(db.playersOf('ANN'), []);
+    assert.deepEqual(
+      db.namesOf(ann).map((r) => r.name),
+      ['ANNIE'],
+    );
+    db.close();
+  });
+
+  test("a score can't name a game logged by another player id", () => {
+    const db = new ScoreDb(':memory:');
+    const id = db.addGame(played({ player: 'aaaa0000000000000000000000000000' }), at);
+    db.add(cut({ name: 'EVE', gameId: id, player: 'eeee0000000000000000000000000000' }), at);
+    db.add(cut({ name: 'EVE', gameId: id }), at);
+    assert.equal(game(db, id)!.name, null);
     db.close();
   });
 
@@ -306,11 +348,16 @@ test('migrating an old database drops Stack scores and keeps Cut ones', () => {
           [1, 'cut', 'ANN'],
         ],
       );
-      assert.throws(() => db.sql.exec(`INSERT INTO score VALUES (4, 'stack', 'DEE', 100, 0, 0, 1, 1000, 4)`), /CHECK/);
+      assert.throws(
+        () =>
+          db.sql.exec(`INSERT INTO score (id, mode, name, score, lines, level, pieces, duration_ms, created_at)
+                       VALUES (4, 'stack', 'DEE', 100, 0, 0, 1, 1000, 4)`),
+        /CHECK/,
+      );
       const indexes = db.sql.prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'score' ORDER BY name`).all();
       assert.deepEqual(
         indexes.map((r) => r.name),
-        ['score_by_mode_name', 'score_by_mode_score', 'score_by_mode_time'],
+        ['score_by_mode_name', 'score_by_mode_score', 'score_by_mode_time', 'score_by_player'],
       );
       assert.equal(db.add(cut({ name: 'EVE' }), new Date(5)), 4); // ids carry on
       assert.equal(db.gameTotals(null).games, 0); // the game log starts empty
@@ -429,7 +476,11 @@ describe('http', () => {
     assert.ok(id > skippedId);
     assert.equal(db.sql.prepare('SELECT player FROM game WHERE id = ?').get(id)!.player, player);
 
-    assert.equal((await post({ ...cut(), name: 'logged', gameId: id }, '10.1.1.1')).status, 201);
+    assert.equal((await post({ ...cut(), name: 'logged', gameId: id, player }, '10.1.1.1')).status, 201);
+    assert.deepEqual(
+      db.playersOf('LOGGED').map((r) => r.player),
+      [player],
+    );
     const rows = db.sql.prepare('SELECT id, name FROM game WHERE id IN (?, ?) ORDER BY id').all(skippedId, id);
     assert.deepEqual(
       rows.map((g) => [g.id, g.name]),
@@ -444,6 +495,7 @@ describe('http', () => {
     assert.equal((await postGame(played({ cuts: 0 }))).status, 400);
     assert.equal((await postGame({ ...played(), mode: 'stack' })).status, 400);
     assert.equal((await postGame({ ...played(), player: 'not-an-id' })).status, 400);
+    assert.equal((await post({ ...cut(), player: 'not-an-id' })).status, 400);
     assert.equal((await post({ ...cut(), gameId: 'x' })).status, 400);
     assert.equal((await fetch(`${base}/api/games`)).status, 405);
     assert.equal((await fetch(`${base}/api/games`, { method: 'POST', body: '{}' })).status, 415);

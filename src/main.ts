@@ -508,7 +508,7 @@ function onSingleOver() {
     }
     const localRank = personalBest ? addHighScore({ name: name ?? ANON, score: f.score }) : -1;
     // Waits for the game log's id (usually back long before the name is typed) to link the two.
-    const request = gameId.then((id) => submitScore({ ...stats, name: name ?? ANON, gameId: id }));
+    const request = gameId.then((id) => submitScore({ ...stats, name: name ?? ANON, gameId: id, player: playerId() }));
     showGameOver(g, request, localRank, !name);
   };
   const submit = () => {

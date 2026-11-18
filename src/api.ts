@@ -55,6 +55,8 @@ export interface ScoreSubmission extends GameStats {
   name: string;
   /** From recordGame, so the logged game gets the name too */
   gameId?: number;
+  /** This browser's random id, so the server can tie the name to it */
+  player: string;
 }
 
 const NAME_CHARS = /^[\p{L}\p{N} .\-_!?']+$/u;

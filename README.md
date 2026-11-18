@@ -55,27 +55,29 @@ submit; skipped games have no name and never reach the leaderboard. Each game al
 random player id that the browser makes once and keeps in `localStorage`, so one player's games
 can be followed whether or not they give a name (and `stats` counts the different ids as
 `devices`). It is 32 random hex digits and says nothing about who plays; clearing site data makes a
-new one. Logging allows 60 games per IP per 10 minutes. To see how much the game is played:
+new one. Submitted scores carry the id too, and a `player_name` table keeps each id and name pair
+(not the shared `ANON`) with how many scores and when it was first and last used, so one person's
+names and devices can be found from either side. Logging allows 60 games per IP per 10 minutes. To see how much the game is played:
 
 ```sh
 docker exec slicefall node server/admin.ts stats              # games today, this week, all time; then per day
 docker exec slicefall node server/admin.ts stats 30           # ... with 30 days in the per-day table
 docker exec slicefall node server/admin.ts games 20           # latest games, "(no name)" when skipped
-docker exec slicefall node server/admin.ts player 3f9a1c07    # every game of one player id (the first digits will do)
+docker exec slicefall node server/admin.ts player 3f9a1c07    # names and games of one player id (the first digits will do)
 ```
 
 ```sh
 docker exec slicefall node server/admin.ts recent 20          # latest scores with their ids
-docker exec slicefall node server/admin.ts name ANN           # every score of one player
+docker exec slicefall node server/admin.ts name ANN           # every score of one player, and the player ids it came from
 docker exec slicefall node server/admin.ts delete 42          # one score
-docker exec slicefall node server/admin.ts delete-name ANN    # all of a player's scores (their games stay, unnamed)
+docker exec slicefall node server/admin.ts delete-name ANN    # all of a player's scores and id pairs (their games stay, unnamed)
 ```
 
 | Endpoint                                  | Returns |
 | ----------------------------------------- | ------- |
 | `GET /api/leaderboard?mode=cut`           | `{ weekStart, week: [...], allTime: [...] }`, top 10 each |
 | `POST /api/games`                         | Takes `{ mode, score, lines, level, pieces, cuts, bestCut, durationMs, player? }` at every game over; returns `{ id }`. `player` is the browser's random id, 32 lowercase hex digits |
-| `POST /api/scores`                        | Takes `{ mode, name, score, lines, level, pieces, durationMs, gameId? }`; returns the boards plus `weekRank` and `allTimeRank`. With `gameId`, that logged game gets the name |
+| `POST /api/scores`                        | Takes `{ mode, name, score, lines, level, pieces, durationMs, gameId?, player? }`; returns the boards plus `weekRank` and `allTimeRank`. With `gameId`, that logged game gets the name (if it has the same `player`); with `player`, the name and id are recorded as a pair |
 | `GET /healthz`                            | `ok` when the database answers |
 
 ## Deployment

@@ -2,9 +2,9 @@
 //
 //   docker exec slicefall node server/admin.ts stats [days]      games played: totals, then per day
 //   docker exec slicefall node server/admin.ts games [n]         latest games, named or skipped
-//   docker exec slicefall node server/admin.ts player <id>       every game of one player id (a prefix will do)
+//   docker exec slicefall node server/admin.ts player <id>       names and games of one player id (a prefix will do)
 //   docker exec slicefall node server/admin.ts recent [n]        latest scores, with ids
-//   docker exec slicefall node server/admin.ts name <NAME>       every score of one player
+//   docker exec slicefall node server/admin.ts name <NAME>       every score of one player, and their player ids
 //   docker exec slicefall node server/admin.ts delete <id>       remove one score
 //   docker exec slicefall node server/admin.ts delete-name <NAME> remove all of a player's scores
 //   docker exec slicefall node server/admin.ts backup <file>     consistent copy, e.g. /data/backup.db
@@ -15,9 +15,14 @@ import { normalizeName, weekStart } from './scores.ts';
 const [cmd, arg] = process.argv.slice(2);
 const db = new ScoreDb(process.env.DATABASE_URL || 'data/slicefall.db');
 
+/** Prints rows as a table, with the unix-ms *_at columns as ISO times. */
 const fmt = (rows: unknown[]) =>
   console.table(
-    (rows as { created_at: number }[]).map((r) => ({ ...r, created_at: new Date(r.created_at).toISOString() })),
+    (rows as Record<string, unknown>[]).map((r) =>
+      Object.fromEntries(
+        Object.entries(r).map(([k, v]) => [k, k.endsWith('_at') && typeof v === 'number' ? new Date(v).toISOString() : v]),
+      ),
+    ),
   );
 
 const name = () => {
@@ -74,6 +79,7 @@ switch (cmd) {
     break;
   case 'player':
     if (!arg || !/^[0-9a-f]{1,32}$/.test(arg)) throw new Error('give a player id, or the start of one');
+    fmt(db.namesOf(arg));
     fmt(db.gamesByPlayer(arg).map(gameRow));
     break;
   case 'recent':
@@ -81,6 +87,7 @@ switch (cmd) {
     break;
   case 'name':
     fmt(db.byName(name()));
+    fmt(db.playersOf(name()));
     break;
   case 'delete':
     console.log(db.remove(Number(arg)) ? `deleted score ${arg}` : `no score with id ${arg}`);
