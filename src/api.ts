@@ -5,6 +5,12 @@ const MODE = 'cut';
 
 export const NAME_MAX = 10;
 
+/**
+ * Where scores go when the player leaves the name blank or skips. It's an ordinary shared name on
+ * the server, so its board row is simply the best score anyone has played anonymously.
+ */
+export const ANON = 'ANON';
+
 export interface BoardEntry {
   rank: number;
   name: string;

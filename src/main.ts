@@ -6,7 +6,7 @@ import { logoHtml } from './logo';
 import { H, SINGLE_W, SingleGame, VersusGame } from './games';
 import { clearTouch, pollPadPresses, setTouch, setTouchSpin, suppressHeldKeys } from './input';
 import { COLORS, drawBackground, drawField, setTheme } from './render';
-import { type Boards, fetchBoards, NAME_MAX, normalizeName, recordGame, submitScore, type Submitted } from './api';
+import { ANON, type Boards, fetchBoards, NAME_MAX, normalizeName, recordGame, submitScore, type Submitted } from './api';
 import {
   type GameMode,
   type ThemeName,
@@ -207,14 +207,15 @@ function boardView(localRank = -1): BoardView {
   return { period: 'week', data: null, status: 'loading', me: normalizeName(settings.name), ranks: null, localRank };
 }
 
-function loadBoards(view: BoardView, request: Promise<Boards | Submitted>) {
+/** `anon`: the score went in as ANON, so it isn't the player's own row and gets no "You:" line. */
+function loadBoards(view: BoardView, request: Promise<Boards | Submitted>, anon = false) {
   const screen = menu.current;
   view.status = 'loading';
   request
     .then((data) => {
       view.data = data;
       view.status = 'ok';
-      if ('weekRank' in data) {
+      if ('weekRank' in data && !anon) {
         view.me = data.name;
         view.ranks = { week: data.weekRank, allTime: data.allTimeRank };
       }
@@ -451,23 +452,32 @@ function onSingleOver() {
   const personalBest = qualifies(f.score);
   if (personalBest) audio.play('highscore');
 
+  /** Sends the score under `name`, or under the shared ANON name when there is none. */
+  const send = (name: string | null) => {
+    // Anonymous play leaves no trace of a name: the remembered one stays as it was.
+    if (name) {
+      settings.name = name;
+      saveSettings(settings);
+    }
+    const localRank = personalBest ? addHighScore({ name: name ?? ANON, score: f.score }) : -1;
+    // Waits for the game log's id (usually back long before the name is typed) to link the two.
+    const request = gameId.then((id) => submitScore({ ...stats, name: name ?? ANON, gameId: id }));
+    showGameOver(g, request, localRank, !name);
+  };
   const submit = () => {
     const input = overlay.querySelector<HTMLInputElement>('input.name');
-    const name = normalizeName(input?.value ?? '');
+    const raw = input?.value ?? '';
+    if (!raw.trim()) return send(null);
+    const name = normalizeName(raw);
     if (!name) {
       overlay.querySelector('.namefield')?.classList.add('bad');
       audio.play('back');
       input?.focus();
       return;
     }
-    settings.name = name;
-    saveSettings(settings);
-    const localRank = personalBest ? addHighScore({ name, score: f.score }) : -1;
-    // Waits for the game log's id (usually back long before the name is typed) to link the two.
-    const request = gameId.then((id) => submitScore({ ...stats, name, gameId: id }));
-    showGameOver(g, request, localRank);
+    send(name);
   };
-  const skip = () => showGameOver(g, fetchBoards(), -1);
+  const skip = () => send(null);
 
   menu.show({
     title: personalBest ? 'New high score!' : 'Game over',
@@ -476,7 +486,7 @@ function onSingleOver() {
     html: () =>
       `<p class="big">${f.score}</p>` +
       `<label class="namefield">Name for the leaderboard<input class="name" maxlength="${NAME_MAX}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="YOUR NAME" value="${esc(settings.name)}"></label>` +
-      `<p class="hint">Up to ${NAME_MAX} letters, digits, spaces or . - _ ! ? '</p>`,
+      `<p class="hint">Up to ${NAME_MAX} letters, digits, spaces or . - _ ! ? '<br>Leave it blank or skip to play as ${ANON}</p>`,
     items: [
       { type: 'button', label: 'Submit score', keyLabel: '↵', action: submit },
       { type: 'button', label: 'Skip', keyLabel: 'Esc', action: skip },
@@ -500,10 +510,11 @@ function onSingleOver() {
   });
 }
 
-function showGameOver(g: SingleGame, request: Promise<Boards | Submitted>, localRank: number) {
+function showGameOver(g: SingleGame, request: Promise<Boards | Submitted>, localRank: number, anon = false) {
   const f = g.field;
   const stats = `<div class="stats"><div><span>Score</span><b>${f.score}</b></div><div><span>Level</span><b>${f.level}</b></div><div><span>Lines</span><b>${f.lines}</b></div></div>`;
   const view = boardView(localRank);
+  if (anon) view.me = null;
   menu.show({
     title: 'Game over',
     className: 'results tight',
@@ -517,7 +528,7 @@ function showGameOver(g: SingleGame, request: Promise<Boards | Submitted>, local
     onBack: showModeSelect,
     backButton: true,
   });
-  loadBoards(view, request);
+  loadBoards(view, request, anon);
 }
 
 function showVersusResults() {
