@@ -4,7 +4,7 @@ import { STEP } from './config';
 import { Demo } from './demo';
 import { logoHtml } from './logo';
 import { H, SINGLE_W, SingleGame, VersusGame } from './games';
-import { clearTouch, pollPadPresses, setTouch, suppressHeldKeys } from './input';
+import { clearTouch, pollPadPresses, setTouch, setTouchSpin, suppressHeldKeys } from './input';
 import { COLORS, drawBackground, drawField, setTheme } from './render';
 import { type Boards, fetchBoards, NAME_MAX, normalizeName, recordGame, submitScore, type Submitted } from './api';
 import {
@@ -590,25 +590,6 @@ window.addEventListener('blur', () => pause());
 pauseBtn.addEventListener('pointerdown', (e) => e.preventDefault());
 pauseBtn.addEventListener('click', () => pause());
 
-touchEl.querySelectorAll<HTMLButtonElement>('button[data-a]').forEach((btn) => {
-  const action = btn.dataset.a as 'left' | 'right' | 'down' | 'rotL' | 'rotR';
-  const on = (e: PointerEvent) => {
-    e.preventDefault();
-    btn.setPointerCapture(e.pointerId);
-    btn.classList.add('down');
-    setTouch(action, true);
-  };
-  const off = () => {
-    btn.classList.remove('down');
-    setTouch(action, false);
-  };
-  btn.addEventListener('pointerdown', on);
-  btn.addEventListener('pointerup', off);
-  btn.addEventListener('pointercancel', off);
-  btn.addEventListener('lostpointercapture', off);
-  btn.addEventListener('contextmenu', (e) => e.preventDefault());
-});
-
 // Joystick: the drag is measured from where the thumb first lands, so it works without aiming
 // at the centre. Past a small dead zone, sideways means left/right and downward means down
 // (a diagonal drag does both).
@@ -660,6 +641,46 @@ touchEl.querySelectorAll<HTMLButtonElement>('button[data-a]').forEach((btn) => {
   stick.addEventListener('pointercancel', end);
   stick.addEventListener('lostpointercapture', end);
   stick.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+// Spin slider: like the joystick, measured from where the thumb lands, but only sideways and
+// analog: the further the slide, the faster the piece spins, up to full speed at the end of the
+// knob's travel. Holding near the start point brakes the spin.
+{
+  const track = document.getElementById('spin')!;
+  const knob = track.querySelector<HTMLElement>('.knob')!;
+  let pointer: number | null = null;
+  let ox = 0;
+  track.addEventListener('pointerdown', (e) => {
+    if (pointer !== null) return;
+    e.preventDefault();
+    pointer = e.pointerId;
+    track.setPointerCapture(e.pointerId);
+    track.classList.add('active');
+    ox = e.clientX;
+    setTouchSpin(0);
+  });
+  track.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== pointer) return;
+    const max = (track.clientWidth - knob.offsetWidth) / 2;
+    const dx = Math.max(-max, Math.min(max, e.clientX - ox));
+    knob.style.transform = `translateX(${dx}px)`;
+    // A small dead zone, then a linear ramp to full speed.
+    const t = dx / max;
+    const dead = 0.08;
+    setTouchSpin(Math.abs(t) < dead ? 0 : Math.sign(t) * ((Math.abs(t) - dead) / (1 - dead)));
+  });
+  const end = (e: PointerEvent) => {
+    if (e.pointerId !== pointer) return;
+    pointer = null;
+    track.classList.remove('active');
+    knob.style.transform = '';
+    setTouchSpin(null);
+  };
+  track.addEventListener('pointerup', end);
+  track.addEventListener('pointercancel', end);
+  track.addEventListener('lostpointercapture', end);
+  track.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
 // ------------------------------------------------------------------ loop
