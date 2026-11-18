@@ -30,6 +30,7 @@ export interface ScoreEntry {
 
 const SETTINGS_KEY = 'slicefall.settings.v1';
 const SCORES_KEY = 'slicefall.scores.v1';
+const PLAYER_KEY = 'slicefall.player.v1';
 export const TABLE_SIZE = 5;
 
 const DEFAULT_SETTINGS: Settings = {
@@ -72,6 +73,24 @@ export function loadSettings(): Settings {
 
 export function saveSettings(s: Settings) {
   write(SETTINGS_KEY, s);
+}
+
+let player: string | null = null;
+
+/**
+ * A random id for this browser, made on first use and kept in localStorage, so the server's game
+ * log can tell one player's games apart. It says nothing about who they are. Without storage it
+ * lasts until the page is closed.
+ */
+export function playerId(): string {
+  if (player) return player;
+  const kept = read<string>(PLAYER_KEY);
+  if (typeof kept === 'string' && /^[0-9a-f]{32}$/.test(kept)) return (player = kept);
+  // getRandomValues, not randomUUID: the latter needs a secure context, and LAN play over http has none.
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  player = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  write(PLAYER_KEY, player);
+  return player;
 }
 
 /** Stored as { cut: [...] }; older saves may also carry a Stack table, which is dropped on the next write. */

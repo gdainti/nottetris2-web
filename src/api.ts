@@ -47,6 +47,8 @@ export interface GameStats {
 export interface GameRecord extends GameStats {
   cuts: number;
   bestCut: number;
+  /** This browser's random id (storage.playerId), so one player's games can be told apart */
+  player: string;
 }
 
 export interface ScoreSubmission extends GameStats {

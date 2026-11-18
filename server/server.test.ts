@@ -89,6 +89,15 @@ describe('validateGame', () => {
     assert.ok(validateGame(played({ lines: 25, level: 2, score: 6000, pieces: 60, cuts: 10, bestCut: 4, durationMs: 400_000 })).ok);
   });
 
+  test('takes an optional player id of 32 lowercase hex digits', () => {
+    const id = '0123456789abcdef0123456789abcdef';
+    assert.deepEqual((validateGame(played({ player: id })) as { value: GameRecord }).value.player, id);
+    assert.ok(!('player' in (validateGame(played()) as { value: object }).value));
+    for (const bad of ['', 'ABCDEF0123456789ABCDEF0123456789', `${id}0`, id.slice(1), 'g'.repeat(32), 42, null]) {
+      assert.equal(validateGame({ ...played(), player: bad }).ok, false, String(bad));
+    }
+  });
+
   test('rejects games the field cannot produce', () => {
     const cases: [string, unknown][] = [
       ['points without rows', played({ lines: 0, cuts: 0, bestCut: 0 })],
@@ -149,9 +158,38 @@ describe('game log', () => {
     db.close();
   });
 
+  test("a player id ties a player's games together, named or not", () => {
+    const db = new ScoreDb(':memory:');
+    const ann = 'aaaa0000000000000000000000000000';
+    const bob = 'bbbb0000000000000000000000000000';
+    const a1 = db.addGame(played({ player: ann }), at);
+    const b1 = db.addGame(played({ player: bob }), at);
+    const a2 = db.addGame(played({ player: ann, score: 300 }), new Date(at.getTime() + 60_000));
+    db.addGame(played(), at); // an older client: no id
+    db.add(cut({ name: 'ANN', gameId: a1 }), at);
+
+    assert.deepEqual(
+      db.gamesByPlayer(ann).map((g) => [g.id, g.name]),
+      [
+        [a2, null],
+        [a1, 'ANN'],
+      ],
+    );
+    assert.deepEqual(
+      db.gamesByPlayer('bb').map((g) => g.id),
+      [b1],
+    );
+    assert.deepEqual(db.gamesByPlayer('c'), []);
+    assert.equal(db.gameTotals(null).devices, 2);
+    db.close();
+  });
+
   test('totals and days', () => {
     const db = new ScoreDb(':memory:');
-    assert.deepEqual({ ...db.gameTotals(null) }, { games: 0, named: 0, players: 0, lines: 0, pieces: 0, playMs: 0, best: 0, avgScore: 0 });
+    assert.deepEqual(
+      { ...db.gameTotals(null) },
+      { games: 0, named: 0, players: 0, devices: 0, lines: 0, pieces: 0, playMs: 0, best: 0, avgScore: 0 },
+    );
     const lastWeek = new Date('2026-11-10T12:00:00Z');
     db.addGame(played({ score: 900, lines: 9, pieces: 30, cuts: 3, bestCut: 3 }), lastWeek);
     const g1 = db.addGame(played(), at);
@@ -162,7 +200,7 @@ describe('game log', () => {
 
     assert.deepEqual(
       { ...db.gameTotals(null) },
-      { games: 4, named: 2, players: 1, lines: 17, pieces: 64, playMs: 240_000, best: 900, avgScore: 400 },
+      { games: 4, named: 2, players: 1, devices: 0, lines: 17, pieces: 64, playMs: 240_000, best: 900, avgScore: 400 },
     );
     const week = db.gameTotals(weekStart(at));
     assert.equal(week.games, 3);
@@ -384,10 +422,12 @@ describe('http', () => {
     assert.equal(skipped.status, 201);
     const skippedId = ((await skipped.json()) as { id: number }).id;
 
-    const r = await postGame(played(), '10.1.1.1');
+    const player = 'feed0000000000000000000000000000';
+    const r = await postGame(played({ player }), '10.1.1.1');
     assert.equal(r.status, 201);
     const { id } = (await r.json()) as { id: number };
     assert.ok(id > skippedId);
+    assert.equal(db.sql.prepare('SELECT player FROM game WHERE id = ?').get(id)!.player, player);
 
     assert.equal((await post({ ...cut(), name: 'logged', gameId: id }, '10.1.1.1')).status, 201);
     const rows = db.sql.prepare('SELECT id, name FROM game WHERE id IN (?, ?) ORDER BY id').all(skippedId, id);
@@ -403,6 +443,7 @@ describe('http', () => {
   test('bad game records are refused', async () => {
     assert.equal((await postGame(played({ cuts: 0 }))).status, 400);
     assert.equal((await postGame({ ...played(), mode: 'stack' })).status, 400);
+    assert.equal((await postGame({ ...played(), player: 'not-an-id' })).status, 400);
     assert.equal((await post({ ...cut(), gameId: 'x' })).status, 400);
     assert.equal((await fetch(`${base}/api/games`)).status, 405);
     assert.equal((await fetch(`${base}/api/games`, { method: 'POST', body: '{}' })).status, 415);

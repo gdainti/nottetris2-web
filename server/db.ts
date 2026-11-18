@@ -74,6 +74,11 @@ const MIGRATIONS = [
    );
    CREATE INDEX game_by_time  ON game (created_at);
    CREATE INDEX game_by_score ON game (score_id);`,
+
+  // A random id the browser keeps, so one player's games can be followed, named or not. NULL for
+  // games logged before it existed, or sent by a client without it.
+  `ALTER TABLE game ADD COLUMN player TEXT;
+   CREATE INDEX game_by_player ON game (player, created_at);`,
 ];
 
 export interface GameTotals {
@@ -82,6 +87,8 @@ export interface GameTotals {
   named: number;
   /** Different names among those */
   players: number;
+  /** Different player ids (browsers) among all the games */
+  devices: number;
   lines: number;
   pieces: number;
   playMs: number;
@@ -142,10 +149,10 @@ export class ScoreDb {
   addGame(g: GameRecord, at: Date): number {
     const r = this.sql
       .prepare(
-        `INSERT INTO game (mode, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO game (mode, player, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(g.mode, g.score, g.lines, g.level, g.pieces, g.cuts, g.bestCut, g.durationMs, at.getTime());
+      .run(g.mode, g.player ?? null, g.score, g.lines, g.level, g.pieces, g.cuts, g.bestCut, g.durationMs, at.getTime());
     return Number(r.lastInsertRowid);
   }
 
@@ -154,6 +161,7 @@ export class ScoreDb {
     return this.sql
       .prepare(
         `SELECT COUNT(*) AS games, COUNT(name) AS named, COUNT(DISTINCT name) AS players,
+                COUNT(DISTINCT player) AS devices,
                 COALESCE(SUM(lines), 0) AS lines, COALESCE(SUM(pieces), 0) AS pieces,
                 COALESCE(SUM(duration_ms), 0) AS playMs, COALESCE(MAX(score), 0) AS best,
                 COALESCE(ROUND(AVG(score)), 0) AS avgScore
@@ -177,10 +185,20 @@ export class ScoreDb {
   recentGames(limit: number) {
     return this.sql
       .prepare(
-        `SELECT id, mode, name, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at
+        `SELECT id, mode, player, name, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at
          FROM game ORDER BY id DESC LIMIT ?`,
       )
       .all(limit);
+  }
+
+  /** Every game of the player ids starting with `prefix`, newest first (for the admin script). */
+  gamesByPlayer(prefix: string) {
+    return this.sql
+      .prepare(
+        `SELECT id, mode, player, name, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at
+         FROM game WHERE player >= ? AND player < ? ORDER BY created_at DESC, id DESC`,
+      )
+      .all(prefix, `${prefix}g`);
   }
 
   /**

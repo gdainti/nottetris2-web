@@ -14,6 +14,7 @@ import {
   highScores,
   loadSettings,
   MOVE_SIDES,
+  playerId,
   qualifies,
   saveSettings,
   TABLE_SIZE,
@@ -487,7 +488,7 @@ function onSingleOver() {
   const stats = { score: f.score, lines: f.lines, level: f.level, pieces: f.placed, durationMs: Math.round(g.elapsed * 1000) };
   // Every finished game goes in the server's game log, even when the score is skipped. A failed
   // request only costs the statistics, so it is ignored.
-  const gameId = recordGame({ ...stats, cuts: f.cuts, bestCut: f.bestCut }).then(
+  const gameId = recordGame({ ...stats, cuts: f.cuts, bestCut: f.bestCut, player: playerId() }).then(
     (r) => r.id,
     () => undefined,
   );

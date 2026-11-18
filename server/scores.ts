@@ -29,7 +29,12 @@ export interface GameRecord extends GameStats {
   cuts: number;
   /** Most rows taken by a single cut */
   bestCut: number;
+  /** Random id the browser keeps in localStorage, so one player's games can be told apart; absent from older clients */
+  player?: string;
 }
+
+/** A player id: 32 lowercase hex digits (128 random bits). */
+const PLAYER_ID = /^[0-9a-f]{32}$/;
 
 /** A leaderboard entry (POST /api/scores). */
 export interface Submission extends GameStats {
@@ -123,7 +128,12 @@ export function validateGame(body: unknown): Checked<GameRecord> {
   const fits = cuts === 0 ? lines === 0 && bestCut === 0 : bestCut >= 1 && bestCut + cuts - 1 <= lines && cuts * bestCut >= lines;
   if (!fits) return { ok: false, error: 'cuts and bestCut do not match lines' };
 
-  return { ok: true, value: { ...stats.value, cuts, bestCut } };
+  const { player } = b;
+  if (player !== undefined && (typeof player !== 'string' || !PLAYER_ID.test(player))) {
+    return { ok: false, error: 'player must be 32 lowercase hex digits' };
+  }
+
+  return { ok: true, value: { ...stats.value, cuts, bestCut, ...(player !== undefined ? { player } : {}) } };
 }
 
 /** Start of the current leaderboard week: Monday 00:00 UTC. */
