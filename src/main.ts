@@ -4,7 +4,7 @@ import { STEP } from './config';
 import { Demo } from './demo';
 import { logoHtml } from './logo';
 import { H, SINGLE_W, SingleGame, VersusGame } from './games';
-import { clearTouch, pollPadPresses, setTouch, setTouchSpin, suppressHeldKeys } from './input';
+import { clearTouch, pollPadPresses, setTouchMove, setTouchSpin, suppressHeldKeys } from './input';
 import { COLORS, drawBackground, drawField, setTheme } from './render';
 import { ANON, type Boards, fetchBoards, NAME_MAX, normalizeName, recordGame, submitScore, type Submitted } from './api';
 import {
@@ -601,20 +601,21 @@ window.addEventListener('blur', () => pause());
 pauseBtn.addEventListener('pointerdown', (e) => e.preventDefault());
 pauseBtn.addEventListener('click', () => pause());
 
+/** Analog stick response: 0 inside the dead zone, then rising linearly to ±1 at full travel. */
+function ramp(t: number, dead: number) {
+  const a = Math.min(1, Math.abs(t));
+  return a < dead ? 0 : (Math.sign(t) * (a - dead)) / (1 - dead);
+}
+
 // Joystick: the drag is measured from where the thumb first lands, so it works without aiming
-// at the centre. Past a small dead zone, sideways means left/right and downward means down
-// (a diagonal drag does both).
+// at the centre. It is analog: the further the drag, the harder the push. Sideways moves, downward
+// drops faster, and a diagonal drag does both.
 {
   const stick = document.getElementById('stick')!;
   const knob = stick.querySelector<HTMLElement>('.knob')!;
   let pointer: number | null = null;
   let ox = 0;
   let oy = 0;
-  const set = (left: boolean, right: boolean, down: boolean) => {
-    setTouch('left', left);
-    setTouch('right', right);
-    setTouch('down', down);
-  };
   const move = (e: PointerEvent) => {
     if (e.pointerId !== pointer) return;
     const max = stick.clientWidth / 2 - knob.offsetWidth / 4;
@@ -626,17 +627,15 @@ pauseBtn.addEventListener('click', () => pause());
       dy *= max / len;
     }
     knob.style.transform = `translate(${dx}px, ${dy}px)`;
-    const dead = max * 0.3;
-    // Down needs the drag to point at least ~30° below horizontal, so a sideways drag that sags a
-    // little does not also push down.
-    set(dx < -dead, dx > dead, dy > dead && dy > Math.abs(dx) * 0.6);
+    // Down has the bigger dead zone, so a sideways drag that sags a little does not also drop.
+    setTouchMove({ x: ramp(dx / max, 0.15), y: ramp(Math.max(0, dy) / max, 0.3) });
   };
   const end = (e: PointerEvent) => {
     if (e.pointerId !== pointer) return;
     pointer = null;
     stick.classList.remove('active');
     knob.style.transform = '';
-    set(false, false, false);
+    setTouchMove(null);
   };
   stick.addEventListener('pointerdown', (e) => {
     if (pointer !== null) return;
@@ -646,6 +645,7 @@ pauseBtn.addEventListener('click', () => pause());
     stick.classList.add('active');
     ox = e.clientX;
     oy = e.clientY;
+    setTouchMove({ x: 0, y: 0 });
   });
   stick.addEventListener('pointermove', move);
   stick.addEventListener('pointerup', end);
@@ -676,10 +676,7 @@ pauseBtn.addEventListener('click', () => pause());
     const max = (track.clientWidth - knob.offsetWidth) / 2;
     const dx = Math.max(-max, Math.min(max, e.clientX - ox));
     knob.style.transform = `translateX(${dx}px)`;
-    // A small dead zone, then a linear ramp to full speed.
-    const t = dx / max;
-    const dead = 0.08;
-    setTouchSpin(Math.abs(t) < dead ? 0 : Math.sign(t) * ((Math.abs(t) - dead) / (1 - dead)));
+    setTouchSpin(ramp(dx / max, 0.08));
   });
   const end = (e: PointerEvent) => {
     if (e.pointerId !== pointer) return;

@@ -25,6 +25,10 @@ export interface Controls {
   rotR: boolean;
   /** Analog spin from the touch slider, -1 (full left) to 1 (full right); overrides rotL/rotR when set. */
   spin?: number;
+  /** Analog sideways push from the touch joystick, -1 (full left) to 1 (full right); overrides left/right when set. */
+  moveX?: number;
+  /** Analog push down from the touch joystick, 0 (none) to 1 (full); overrides down when set. */
+  drop?: number;
 }
 
 export const NO_CONTROLS: Controls = { left: false, right: false, down: false, rotL: false, rotR: false };
@@ -307,15 +311,19 @@ export class Field {
       if (k.rotL && spin > -C.MAX_SPIN) body.applyTorque(-C.TORQUE, true);
     }
 
+    // Sideways: a force in proportion to the push; linear damping turns it into a matching speed.
     const centre = body.getWorldCenter();
-    if (k.left) body.applyForce(Vec2(-C.SIDE_FORCE, 0), centre, true);
-    if (k.right) body.applyForce(Vec2(C.SIDE_FORCE, 0), centre, true);
+    const side = k.moveX ?? Number(k.right) - Number(k.left);
+    if (side) body.applyForce(Vec2(C.SIDE_FORCE * side, 0), centre, true);
 
+    // Down: a partial push drops at a speed between the normal fall and the full drop speed.
+    const drop = k.drop ?? (k.down ? 1 : 0);
     const vel = body.getLinearVelocity();
     const vy = vel.y * PX;
-    if (k.down) {
-      if (vy > C.MAX_DROP_SPEED) body.setLinearVelocity(Vec2(vel.x, C.MAX_DROP_SPEED / PX));
-      else body.applyForce(Vec2(0, C.DOWN_FORCE), centre, true);
+    if (drop > 0) {
+      const limit = this.speed + (C.MAX_DROP_SPEED - this.speed) * drop;
+      if (vy > limit) body.setLinearVelocity(Vec2(vel.x, Math.max(limit, vy - C.FALL_BRAKE * dt) / PX));
+      else body.applyForce(Vec2(0, C.DOWN_FORCE * drop), centre, true);
     } else if (vy > this.speed) {
       body.setLinearVelocity(Vec2(vel.x, (vy - C.FALL_BRAKE * dt) / PX));
     }
