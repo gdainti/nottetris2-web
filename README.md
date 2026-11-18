@@ -51,27 +51,33 @@ believable one. Remove those by hand:
 Every finished Cut game is also logged in a `game` table, whether the player submits the score or
 skips it (and games that scored nothing, where no name is asked). Each row keeps the score, lines,
 level, pieces, cuts, biggest single cut and play time. A game gets the player's name only when they
-submit; skipped games have no name and never reach the leaderboard. Logging allows 60 games per IP
-per 10 minutes. To see how much the game is played:
+submit; skipped games have no name and never reach the leaderboard. Each game also carries a
+random player id that the browser makes once and keeps in `localStorage`, so one player's games
+can be followed whether or not they give a name (and `stats` counts the different ids as
+`devices`). It is 32 random hex digits and says nothing about who plays; clearing site data makes a
+new one. Submitted scores carry the id too, and a `player_name` table keeps each id and name pair
+(not the shared `ANON`) with how many scores and when it was first and last used, so one person's
+names and devices can be found from either side. Logging allows 60 games per IP per 10 minutes. To see how much the game is played:
 
 ```sh
 docker exec slicefall node server/admin.ts stats              # games today, this week, all time; then per day
 docker exec slicefall node server/admin.ts stats 30           # ... with 30 days in the per-day table
 docker exec slicefall node server/admin.ts games 20           # latest games, "(no name)" when skipped
+docker exec slicefall node server/admin.ts player 3f9a1c07    # names and games of one player id (the first digits will do)
 ```
 
 ```sh
 docker exec slicefall node server/admin.ts recent 20          # latest scores with their ids
-docker exec slicefall node server/admin.ts name ANN           # every score of one player
+docker exec slicefall node server/admin.ts name ANN           # every score of one player, and the player ids it came from
 docker exec slicefall node server/admin.ts delete 42          # one score
-docker exec slicefall node server/admin.ts delete-name ANN    # all of a player's scores (their games stay, unnamed)
+docker exec slicefall node server/admin.ts delete-name ANN    # all of a player's scores and id pairs (their games stay, unnamed)
 ```
 
 | Endpoint                                  | Returns |
 | ----------------------------------------- | ------- |
 | `GET /api/leaderboard?mode=cut`           | `{ weekStart, week: [...], allTime: [...] }`, top 10 each |
-| `POST /api/games`                         | Takes `{ mode, score, lines, level, pieces, cuts, bestCut, durationMs }` at every game over; returns `{ id }` |
-| `POST /api/scores`                        | Takes `{ mode, name, score, lines, level, pieces, durationMs, gameId? }`; returns the boards plus `weekRank` and `allTimeRank`. With `gameId`, that logged game gets the name |
+| `POST /api/games`                         | Takes `{ mode, score, lines, level, pieces, cuts, bestCut, durationMs, player? }` at every game over; returns `{ id }`. `player` is the browser's random id, 32 lowercase hex digits |
+| `POST /api/scores`                        | Takes `{ mode, name, score, lines, level, pieces, durationMs, gameId?, player? }`; returns the boards plus `weekRank` and `allTimeRank`. With `gameId`, that logged game gets the name (if it has the same `player`); with `player`, the name and id are recorded as a pair |
 | `GET /healthz`                            | `ok` when the database answers |
 
 ## Deployment
@@ -219,4 +225,5 @@ Physics uses [planck.js](https://github.com/piqnt/planck.js), a JavaScript rewri
 the same engine LÖVE wraps. The simulation runs at a fixed 60 Hz step so it behaves the same
 on any refresh rate.
 
-Settings, your last leaderboard name and a personal top 5 are stored in the browser's `localStorage`.
+Settings, your last leaderboard name, a personal top 5 and the random player id sent with each
+logged game are stored in the browser's `localStorage`.

@@ -47,12 +47,16 @@ export interface GameStats {
 export interface GameRecord extends GameStats {
   cuts: number;
   bestCut: number;
+  /** This browser's random id (storage.playerId), so one player's games can be told apart */
+  player: string;
 }
 
 export interface ScoreSubmission extends GameStats {
   name: string;
   /** From recordGame, so the logged game gets the name too */
   gameId?: number;
+  /** This browser's random id, so the server can tie the name to it */
+  player: string;
 }
 
 const NAME_CHARS = /^[\p{L}\p{N} .\-_!?']+$/u;
