@@ -43,9 +43,21 @@ function eventSound(e: FieldEvent) {
     case 'countered':
       audio.play('counter');
       break;
+    case 'tspin':
+      audio.play('tspin');
+      break;
     default:
       break;
   }
+}
+
+/**
+ * The label over (or under) a field's score: normally `text`, but right after a T-spin a blinking
+ * T-SPIN! +points in its place.
+ */
+function scoreLabel(ctx: CanvasRenderingContext2D, f: Field, text: string, x: number, y: number, align: CanvasTextAlign = 'left') {
+  if (f.tSpinTimer >= C.TSPIN_POPUP_TIME) return label(ctx, text, x, y, align);
+  if (Math.floor(f.tSpinTimer / 0.1) % 2 === 0) value(ctx, `T-SPIN! +${f.lastTSpin}`, x, y + 1, 15, align, COLORS.accent);
 }
 
 export class SingleGame {
@@ -104,7 +116,7 @@ export class SingleGame {
     // The pause button is an HTML element over pauseRect (y 32–70); the cards sit below it.
     const top = 82;
     card(ctx, px, top, pw, 290);
-    label(ctx, 'Score', px + 18, top + 34);
+    scoreLabel(ctx, f, 'Score', px + 18, top + 34);
     value(ctx, String(f.score), px + 18, top + 72, 34);
     if (f.addTimer < C.SCORE_POPUP_TIME && !f.isCutting() && f.lastAdd > 0) {
       const t = f.addTimer / C.SCORE_POPUP_TIME;
@@ -266,7 +278,7 @@ export class VersusGame {
       card(ctx, px, y, pw, 184);
       label(ctx, `Player ${i + 1}`, cx, y + 30, 'center');
       value(ctx, String(f.score), cx, y + 76, 40, 'center');
-      label(ctx, 'score', cx, y + 96, 'center');
+      scoreLabel(ctx, f, 'score', cx, y + 96, 'center');
       if (!this.paused && this.phase !== 'countdown') drawPreview(ctx, f.nextKind, cx, y + 140, f.nextSpin, 0.55);
     }
     card(ctx, px, top + 400, pw, 72);
@@ -371,7 +383,7 @@ export class OnlineGame {
     if (e === 'topout') {
       audio.play('back');
       this.phase = 'waiting';
-      this.send({ t: 'over', score: this.field.score });
+      this.send({ t: 'over', score: this.field.score, tSpins: this.field.tSpins, tSpinPoints: this.field.tSpinPoints });
     } else if (e === 'fallout') audio.play('fallout');
     else eventSound(e);
   }
@@ -445,7 +457,7 @@ export class OnlineGame {
     // The Leave button is an HTML element over pauseRect (y 32–70); the cards sit below it.
     let y = 82;
     card(ctx, px, y, pw, 96);
-    label(ctx, 'You', px + 18, y + 30);
+    scoreLabel(ctx, f, 'You', px + 18, y + 30);
     value(ctx, String(f.score), px + 18, y + 72, 30);
     if (this.phase === 'playing') drawPreview(ctx, f.nextKind, px + pw - 42, y + 50, f.nextSpin, 0.4);
 

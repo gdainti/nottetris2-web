@@ -15,7 +15,7 @@ import {
   yRange,
   area,
 } from './geometry';
-import { GARBAGE, PIECE_SHAPES } from './pieces';
+import { GARBAGE, PIECE_SHAPES, T } from './pieces';
 
 export interface Controls {
   left: boolean;
@@ -37,7 +37,7 @@ export const NO_CONTROLS: Controls = { left: false, right: false, down: false, r
  * incoming: the other player's attack arrived; garbage: waiting blocks dropped; countered: a cut
  * cancelled blocks that were waiting (Versus attacks).
  */
-export type FieldEvent = 'land' | 'clear' | 'clear4' | 'levelup' | 'topout' | 'fallout' | 'over' | 'incoming' | 'garbage' | 'countered';
+export type FieldEvent = 'tspin' | 'land' | 'clear' | 'clear4' | 'levelup' | 'topout' | 'fallout' | 'over' | 'incoming' | 'garbage' | 'countered';
 
 export type FieldState = 'idle' | 'playing' | 'cutting' | 'toppedOut' | 'failing' | 'over';
 
@@ -115,6 +115,12 @@ export class Field {
   lastAdd = 0;
   addTimer = C.SCORE_POPUP_TIME;
   nextSpin = 0;
+  /** T-spins (full turns of a falling T) and the points they paid, for the game log */
+  tSpins = 0;
+  tSpinPoints = 0;
+  /** Points of the latest T-spin, and how long since it (shows the T-SPIN! label until TSPIN_POPUP_TIME) */
+  lastTSpin = 0;
+  tSpinTimer = C.TSPIN_POPUP_TIME;
 
   /** Area held in each row, in px² (row is cut above CLEAR_THRESHOLD * BLOCK_AREA). */
   rowArea: number[] = new Array(C.ROWS).fill(0);
@@ -139,6 +145,9 @@ export class Field {
   private dropping = new Set<Piece>();
   private dropLanded = new Set<Piece>();
   private dropTimer = 0;
+  /** The falling piece's angle at its last full turn (or spawn), and how many turns it has made */
+  private turnFrom = 0;
+  private turns = 0;
 
   constructor(opts: FieldOptions) {
     this.pickKind = opts.pickKind;
@@ -241,6 +250,29 @@ export class Field {
     const p = this.createPiece(kind, PIECE_SHAPES[kind], C.SPAWN_X, C.SPAWN_Y, 0);
     p.body.setLinearVelocity(Vec2(0, this.speed / PX));
     this.active = p;
+    this.turnFrom = 0;
+    this.turns = 0;
+  }
+
+  /**
+   * A falling T that has turned a full circle from where it last did (either way) has made a
+   * T-spin. Counting from that last turn, rather than adding up every bit of rotation, means
+   * wiggling back and forth earns nothing.
+   */
+  private checkTSpin() {
+    const p = this.active;
+    if (!p || p.kind !== T) return;
+    const turned = p.body.getAngle() - this.turnFrom;
+    if (Math.abs(turned) < Math.PI * 2) return;
+    this.turnFrom += Math.sign(turned) * Math.PI * 2;
+    const add = C.TSPIN_POINTS[Math.min(this.turns, C.TSPIN_POINTS.length - 1)];
+    this.turns++;
+    this.tSpins++;
+    this.tSpinPoints += add;
+    this.score += add;
+    this.lastTSpin = add;
+    this.tSpinTimer = 0;
+    this.emit('tspin');
   }
 
   private onContact(c: Contact) {
@@ -285,6 +317,7 @@ export class Field {
 
     this.nextSpin = (this.nextSpin + C.NEXT_SPIN_SPEED * dt) % (Math.PI * 2);
     if (this.addTimer < C.SCORE_POPUP_TIME) this.addTimer = Math.min(C.SCORE_POPUP_TIME, this.addTimer + dt);
+    if (this.tSpinTimer < C.TSPIN_POPUP_TIME) this.tSpinTimer = Math.min(C.TSPIN_POPUP_TIME, this.tSpinTimer + dt);
 
     if (this.state === 'playing' && this.active) this.applyControls(dt, controls);
 
@@ -292,6 +325,7 @@ export class Field {
     this.limitDropSpeed();
     this.landed = false;
     this.world.step(dt, C.VELOCITY_ITERATIONS, C.POSITION_ITERATIONS);
+    if (this.state === 'playing') this.checkTSpin();
     if (this.landed && this.state === 'playing' && this.active) this.endBlock();
     if (this.dropping.size && this.state === 'playing') {
       this.dropTimer += dt;

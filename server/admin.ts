@@ -50,6 +50,8 @@ const matchRow = (m: Record<string, unknown>) => {
     guest: short(m.guest, 8),
     host_score: m.host_score ?? '-',
     guest_score: m.guest_score ?? '-',
+    host_t_spins: m.host_t_spins ?? '-',
+    guest_t_spins: m.guest_t_spins ?? '-',
     winner: m.winner ?? '-',
     secs: Math.round(Number(duration_ms) / 1000),
   };

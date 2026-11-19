@@ -117,6 +117,17 @@ const MIGRATIONS = [
   // of their own, so every ANON row was anonymous.
   `UPDATE score SET name = 'INCOGNITO' WHERE name = 'ANON';
    UPDATE game  SET name = 'INCOGNITO' WHERE name = 'ANON';`,
+
+  // T-spins: full turns of a falling T, and the points they paid (part of score). 0 for older games.
+  `ALTER TABLE game ADD COLUMN t_spins INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE game ADD COLUMN t_spin_points INTEGER NOT NULL DEFAULT 0;`,
+
+  // T-spins of each player of an online round, reported with their score: NULL when the score is,
+  // or the client didn't send them.
+  `ALTER TABLE match ADD COLUMN host_t_spins INTEGER;
+   ALTER TABLE match ADD COLUMN host_t_spin_points INTEGER;
+   ALTER TABLE match ADD COLUMN guest_t_spins INTEGER;
+   ALTER TABLE match ADD COLUMN guest_t_spin_points INTEGER;`,
 ];
 
 /** One online Versus round, as server/match.ts reports it. */
@@ -127,6 +138,11 @@ export interface MatchRecord {
   guest: string | null;
   hostScore: number | null;
   guestScore: number | null;
+  /** T-spins of each player and the points they paid (part of the score); null with no score or not sent */
+  hostTSpins: number | null;
+  hostTSpinPoints: number | null;
+  guestTSpins: number | null;
+  guestTSpinPoints: number | null;
   /** finished: both topped out; host-left / guest-left: who left (or dropped) first; restart: the server stopped */
   ended: 'finished' | 'host-left' | 'guest-left' | 'restart';
   durationMs: number;
@@ -251,10 +267,10 @@ export class ScoreDb {
   addGame(g: GameRecord, at: Date): number {
     const r = this.sql
       .prepare(
-        `INSERT INTO game (mode, player, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO game (mode, player, score, lines, level, pieces, cuts, best_cut, t_spins, t_spin_points, duration_ms, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(g.mode, g.player ?? null, g.score, g.lines, g.level, g.pieces, g.cuts, g.bestCut, g.durationMs, at.getTime());
+      .run(g.mode, g.player ?? null, g.score, g.lines, g.level, g.pieces, g.cuts, g.bestCut, g.tSpins, g.tSpinPoints, g.durationMs, at.getTime());
     return Number(r.lastInsertRowid);
   }
 
@@ -270,10 +286,26 @@ export class ScoreDb {
             : 'draw';
     const r = this.sql
       .prepare(
-        `INSERT INTO match (room, round, host, guest, host_score, guest_score, winner, ended, duration_ms, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO match (room, round, host, guest, host_score, guest_score, host_t_spins, host_t_spin_points,
+                            guest_t_spins, guest_t_spin_points, winner, ended, duration_ms, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(m.room, m.round, m.host, m.guest, m.hostScore, m.guestScore, winner, m.ended, m.durationMs, at.getTime());
+      .run(
+        m.room,
+        m.round,
+        m.host,
+        m.guest,
+        m.hostScore,
+        m.guestScore,
+        m.hostTSpins,
+        m.hostTSpinPoints,
+        m.guestTSpins,
+        m.guestTSpinPoints,
+        winner,
+        m.ended,
+        m.durationMs,
+        at.getTime(),
+      );
     return Number(r.lastInsertRowid);
   }
 
@@ -296,7 +328,7 @@ export class ScoreDb {
   recentMatches(limit: number) {
     return this.sql
       .prepare(
-        `SELECT id, room, round, host, guest, host_score, guest_score, winner, ended, duration_ms, created_at
+        `SELECT id, room, round, host, guest, host_score, guest_score, host_t_spins, guest_t_spins, winner, ended, duration_ms, created_at
          FROM match ORDER BY id DESC LIMIT ?`,
       )
       .all(limit);
@@ -306,7 +338,7 @@ export class ScoreDb {
   matchesByPlayer(prefix: string) {
     return this.sql
       .prepare(
-        `SELECT id, room, round, host, guest, host_score, guest_score, winner, ended, duration_ms, created_at
+        `SELECT id, room, round, host, guest, host_score, guest_score, host_t_spins, guest_t_spins, winner, ended, duration_ms, created_at
          FROM match WHERE (host >= ?1 AND host < ?2) OR (guest >= ?1 AND guest < ?2)
          ORDER BY created_at DESC, id DESC`,
       )
@@ -342,7 +374,7 @@ export class ScoreDb {
   recentGames(limit: number) {
     return this.sql
       .prepare(
-        `SELECT id, mode, player, name, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at
+        `SELECT id, mode, player, name, score, lines, level, pieces, cuts, best_cut, t_spins, t_spin_points, duration_ms, created_at
          FROM game ORDER BY id DESC LIMIT ?`,
       )
       .all(limit);
@@ -352,7 +384,7 @@ export class ScoreDb {
   gamesByPlayer(prefix: string) {
     return this.sql
       .prepare(
-        `SELECT id, mode, player, name, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at
+        `SELECT id, mode, player, name, score, lines, level, pieces, cuts, best_cut, t_spins, t_spin_points, duration_ms, created_at
          FROM game WHERE player >= ? AND player < ? ORDER BY created_at DESC, id DESC`,
       )
       .all(prefix, `${prefix}g`);

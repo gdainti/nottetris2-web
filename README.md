@@ -51,7 +51,7 @@ believable one. Remove those by hand:
 
 Every finished Cut game is also logged in a `game` table, whether the player submits the score or
 skips it (and games that scored nothing, where no name is asked). Each row keeps the score, lines,
-level, pieces, cuts, biggest single cut and play time. A game gets the player's name only when they
+level, pieces, cuts, biggest single cut, T-spins and their points, and play time. A game gets the player's name only when they
 submit; skipped games have no name and never reach the leaderboard. Each game also carries a
 random player id that the browser makes once and keeps in `localStorage`, so one player's games
 can be followed whether or not they give a name (and `stats` counts the different ids as
@@ -78,8 +78,8 @@ docker exec slicefall node server/admin.ts delete-name ANN    # all of a player'
 | Endpoint                                  | Returns |
 | ----------------------------------------- | ------- |
 | `GET /api/leaderboard?mode=cut`           | `{ weekStart, week: [...], allTime: [...] }`, top 10 each |
-| `POST /api/games`                         | Takes `{ mode, score, lines, level, pieces, cuts, bestCut, durationMs, player? }` at every game over; returns `{ id }`. `player` is the browser's random id, 32 lowercase hex digits |
-| `POST /api/scores`                        | Takes `{ mode, name, score, lines, level, pieces, durationMs, gameId?, player? }`; returns the boards plus `weekRank` and `allTimeRank`. With `gameId`, that logged game gets the name (if it has the same `player`); with `player`, the name and id are recorded as a pair |
+| `POST /api/games`                         | Takes `{ mode, score, lines, level, pieces, cuts, bestCut, durationMs, tSpins?, tSpinPoints?, player? }` at every game over; returns `{ id }`. `player` is the browser's random id, 32 lowercase hex digits |
+| `POST /api/scores`                        | Takes `{ mode, name, score, lines, level, pieces, durationMs, tSpins?, tSpinPoints?, gameId?, player? }`; returns the boards plus `weekRank` and `allTimeRank`. With `gameId`, that logged game gets the name (if it has the same `player`); with `player`, the name and id are recorded as a pair |
 | `GET /healthz`                            | `ok` when the database answers |
 | `GET /api/match` (WebSocket)              | Online Versus rooms; see below |
 
@@ -157,7 +157,8 @@ is fine between friends, and it's why there is no Versus leaderboard.
 Every round the server starts goes in a `match` table when it ends, for play statistics: a random id
 for the room (codes are reused, so they can't group rounds), the round number in that room (2 and up
 are rematches), both browsers' player ids (sent with create and join; the host created the room, the
-guest joined), both final scores, the winner, how it ended (`finished` once both topped out,
+guest joined), both final scores with each player's T-spins and their points (as their browser
+reports them with the score), the winner, how it ended (`finished` once both topped out,
 `host-left` or `guest-left` when someone left or dropped first, with the score of anyone who had
 already topped out, or `restart` when the server stopped) and how long the round took by the
 server's clock. A room nobody joined, and leaving after a finished round, log nothing. See
@@ -286,7 +287,7 @@ The itch page's cover, screenshots and gameplay GIF are in `itch/screenshots/`.
 
 | Mode   | Original | Rules |
 | ------ | -------- | ----- |
-| Cut    | Game A   | Endless. A row is cut out when it holds 8.1 blocks' worth of area. Score = `ceil((n·3)^(avg^10)·20 + n²·40)` for `n` rows at average density `avg`. Level up every 10 rows (+7 px/s fall speed). |
+| Cut    | Game A   | Endless. A row is cut out when it holds 8.1 blocks' worth of area. Score = `ceil((n·3)^(avg^10)·20 + n²·40)` for `n` rows at average density `avg`. Level up every 10 rows (+7 px/s fall speed). A T-spin (a joke, since real ones can't happen here) is a falling T turning a full circle: +1 for its first turn, +10 for the second, +100 for each after that. |
 | Versus | 2P       | Two Cut fields side by side, same piece sequence (mirrored for player 1). Both play until they top out; higher score wins. With attacks on, cuts drop blocks on the other player (see Attacks). |
 | Online | —        | Versus against a player on another device, joined by a code. Each player's own field is full size; the other player's is drawn small beside it. Same pieces for both, not mirrored. Attacks as in Versus. |
 

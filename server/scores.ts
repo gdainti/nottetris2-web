@@ -21,6 +21,9 @@ export interface GameStats {
   level: number;
   pieces: number;
   durationMs: number;
+  /** T-spins (full turns of a falling T) and the points they paid; 0 from older clients */
+  tSpins: number;
+  tSpinPoints: number;
 }
 
 /** One finished game for the game log (POST /api/games). */
@@ -71,7 +74,9 @@ const isInt = (v: unknown, min: number, max: number): v is number =>
  * Checks game numbers against what the game can actually produce. This stops typos and the
  * laziest fakes, not a determined cheat: the browser is trusted with the numbers.
  *
- * - Cut: points only come from cutting rows, so no rows means no points. The level is lines / 10.
+ * - T-spins pay 1, 10, then 100 for each full turn of a falling T, so between 1 and 100 points
+ *   each. A turn takes about 2 s at the top spin speed; allow 1 s.
+ * - Cut: the other points only come from cutting rows, so no rows means no such points. The level is lines / 10.
  *   A cut of n rows pays ceil((3n)^(avg^10)·20 + 40n²) where avg is how full the rows were
  *   (0.81–1). Even 18 rows at once stays under 1000 per row.
  *   Every cut row took at least 8 blocks, and a piece is 4 blocks, so pieces ≥ 2 × lines.
@@ -88,13 +93,21 @@ function checkStats(b: Record<string, unknown>): Checked<GameStats> {
   }
   if (!isInt(durationMs, 0, 24 * 3600 * 1000)) return { ok: false, error: 'durationMs out of range' };
 
+  const tSpins = b.tSpins ?? 0;
+  const tSpinPoints = b.tSpinPoints ?? 0;
+  if (!isInt(tSpins, 0, 100_000) || !isInt(tSpinPoints, tSpins, tSpins * 100)) {
+    return { ok: false, error: 'tSpins and tSpinPoints do not match' };
+  }
+  if (durationMs < tSpins * 1000) return { ok: false, error: 'game too short for that many T-spins' };
+
+  const cutScore = score - tSpinPoints;
   if (level !== Math.floor(lines / 10)) return { ok: false, error: 'level does not match lines' };
-  if ((score === 0) !== (lines === 0) || score > lines * 1000 || pieces < lines * 2) {
+  if (cutScore < 0 || (cutScore === 0) !== (lines === 0) || cutScore > lines * 1000 || pieces < lines * 2) {
     return { ok: false, error: 'not a possible Cut result' };
   }
   if (durationMs < pieces * 200) return { ok: false, error: 'game too short for that many pieces' };
 
-  return { ok: true, value: { mode, score, lines, level, pieces, durationMs } };
+  return { ok: true, value: { mode, score, lines, level, pieces, durationMs, tSpins, tSpinPoints } };
 }
 
 /** A score for the leaderboard: a game that cut at least one row, plus a valid name. */
