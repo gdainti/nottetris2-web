@@ -8,6 +8,7 @@ import { clearTouch, pollPadPresses, setTouch, setTouchMove, setTouchSpin, suppr
 import { COLORS, drawBackground, drawField, setTheme } from './render';
 import { ANON, type Boards, fetchBoards, NAME_MAX, normalizeName, recordGame, submitScore, type Submitted } from './api';
 import { CODE_LENGTH, type MatchError, MatchSocket, normalizeCode } from './net';
+import { report, reportSetting } from './events';
 import {
   type GameMode,
   type ThemeName,
@@ -114,11 +115,26 @@ function toast(text: string) {
 }
 
 function toggleMute() {
+  const was = settings.muted;
   settings.muted = !settings.muted;
   audio.setMuted(settings.muted);
   saveSettings(settings);
+  reportMute(was);
   toast(settings.muted ? 'Sound off' : 'Sound on');
   menu.refresh();
+}
+
+/** Reports muting or unmuting (the M key or Options → Audio) to the events chat, once it has settled. */
+function reportMute(was: boolean) {
+  reportSetting('sound', String(was), String(settings.muted), { type: 'sound', muted: settings.muted });
+}
+
+const percent = (v: number) => Math.round(v * 100);
+const volumes = () => `${percent(settings.sfx)}/${percent(settings.music)}`;
+
+/** Reports the Sound and Music volumes once the sliders have stopped moving. */
+function reportVolume(was: string) {
+  reportSetting('volume', was, volumes(), { type: 'volume', sfx: percent(settings.sfx), music: percent(settings.music) });
 }
 
 function setLayout(w: number) {
@@ -412,9 +428,11 @@ function showOptions(back: () => void) {
         options: ['On', 'Muted'],
         get: () => (settings.muted ? 1 : 0),
         set: (i) => {
+          const was = settings.muted;
           settings.muted = i === 1;
           audio.setMuted(settings.muted);
           saveSettings(settings);
+          reportMute(was);
         },
       },
       {
@@ -422,9 +440,11 @@ function showOptions(back: () => void) {
         label: 'Sound',
         get: () => settings.sfx,
         set: (v) => {
+          const was = volumes();
           settings.sfx = v;
           audio.setVolumes(settings.sfx, settings.music);
           saveSettings(settings);
+          reportVolume(was);
         },
       },
       {
@@ -432,9 +452,11 @@ function showOptions(back: () => void) {
         label: 'Music',
         get: () => settings.music,
         set: (v) => {
+          const was = volumes();
           settings.music = v;
           audio.setVolumes(settings.sfx, settings.music);
           saveSettings(settings);
+          reportVolume(was);
         },
       },
       {
@@ -443,9 +465,11 @@ function showOptions(back: () => void) {
         options: THEMES.map((t) => THEME_NAMES[t]),
         get: () => THEMES.indexOf(settings.theme),
         set: (i) => {
+          const was = settings.theme;
           settings.theme = THEMES[i];
           saveSettings(settings);
           applyTheme();
+          reportSetting('theme', was, settings.theme, { type: 'theme', theme: settings.theme });
         },
       },
       // The on-screen controls only appear on touch screens, so only they get these settings.
@@ -490,10 +514,12 @@ function startGame() {
   if (settings.mode === 'versus') {
     audio.stopMusic();
     game = new VersusGame(startMusic, showVersusResults, settings.attacks, settings.pieces);
+    report({ type: 'start', mode: 'versus' });
   } else {
     game = new SingleGame(onSingleOver, settings.pieces);
     game.start();
     startMusic(true);
+    report({ type: 'start', mode: 'cut' });
   }
   setLayout(game.width);
   state = 'game';
@@ -580,6 +606,7 @@ function onSingleOver() {
     tSpins: f.tSpins,
     tSpinPoints: f.tSpinPoints,
   };
+  report({ type: 'finish', mode: 'cut', score: stats.score, lines: stats.lines, level: stats.level, durationMs: stats.durationMs });
   // Every finished game goes in the server's game log, even when the score is skipped. A failed
   // request only costs the statistics, so it is ignored.
   const gameId = recordGame({ ...stats, cuts: f.cuts, bestCut: f.bestCut, player: playerId() }).then(
@@ -677,6 +704,7 @@ function showVersusResults() {
   state = 'results';
   updateTouch();
   const [a, b] = g.fields.map((f) => f.score);
+  report({ type: 'finish', mode: 'versus', scores: [a, b] });
   menu.show({
     title: g.winner === 2 ? 'Draw!' : `Player ${g.winner + 1} wins!`,
     className: 'compact',
@@ -695,6 +723,10 @@ function showVersusResults() {
 
 interface Match {
   socket: MatchSocket;
+  /** This player created the room (or joined someone else's) */
+  host: boolean;
+  /** The round being played, from 1 */
+  round: number;
   /** Rounds won in this room: [this player, the other] */
   wins: [number, number];
   /** This player, or the other, asked for a rematch after the last round */
@@ -764,7 +796,7 @@ function showConnecting(title: string, back: () => void) {
 function createMatch() {
   leaveMatch();
   const socket = new MatchSocket({ t: 'create', player: playerId(), attacks: settings.attacks, pieces: settings.pieces });
-  match = { socket, wins: [0, 0], rematch: false, theyRematch: false, gone: null };
+  match = { socket, host: true, round: 0, wins: [0, 0], rematch: false, theyRematch: false, gone: null };
   socket.on = {
     room: showWaiting,
     start: startOnline,
@@ -836,7 +868,7 @@ function showJoin(code: string, note = '') {
 function joinMatch(code: string) {
   leaveMatch();
   const socket = new MatchSocket({ t: 'join', code, player: playerId() });
-  match = { socket, wins: [0, 0], rematch: false, theyRematch: false, gone: null };
+  match = { socket, host: false, round: 0, wins: [0, 0], rematch: false, theyRematch: false, gone: null };
   socket.on = {
     start: startOnline,
     error: (e) => showJoin(code, matchError(e)),
@@ -845,9 +877,11 @@ function joinMatch(code: string) {
 }
 
 /** Starts a round in the current room (the first one, or a rematch), with the room's attack and piece settings. */
-function startOnline(seed: number, _round: number, attacks: boolean, pieces: PieceOrder) {
+function startOnline(seed: number, round: number, attacks: boolean, pieces: PieceOrder) {
   const m = match;
   if (!m) return;
+  m.round = round;
+  report({ type: 'start', mode: 'online', host: m.host, round });
   m.rematch = false;
   m.theyRematch = false;
   menu.hide();
@@ -895,6 +929,7 @@ function showOnlineResults(first = true) {
   updateTouch();
   const { you, them } = g.result;
   if (first && you > them) audio.play('highscore');
+  if (first) report({ type: 'finish', mode: 'online', host: m.host, round: m.round, you, them });
   const status = () => {
     if (m.gone) return esc(m.gone);
     if (m.rematch) return 'Waiting for the other player…';

@@ -4,7 +4,9 @@ import { extname, join, relative } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import type { Duplex } from 'node:stream';
 import type { ScoreDb } from './db.ts';
+import { eventMessage, validateEvent } from './events.ts';
 import { type MatchOptions, Matches } from './match.ts';
+import { type Notify, silent } from './notifier.ts';
 import { MODES, type Mode, validate, validateGame, weekStart } from './scores.ts';
 import { acceptUpgrade, refuseUpgrade } from './ws.ts';
 
@@ -20,6 +22,10 @@ export interface AppOptions {
   gameRateLimit?: { max: number; windowMs: number };
   /** Online rooms created or joined per IP per window. */
   matchRateLimit?: { max: number; windowMs: number };
+  /** Reports for the events chat (POST /api/events) allowed per IP per window. */
+  eventRateLimit?: { max: number; windowMs: number };
+  /** Posts to the events chat (notifier.ts). Default: nothing is posted. */
+  notify?: Notify;
   match?: MatchOptions;
   now?: () => Date;
 }
@@ -184,6 +190,10 @@ export function createApp(opts: AppOptions): AppServer {
   const gameLimit = rateLimiter(opts.gameRateLimit?.max ?? 60, opts.gameRateLimit?.windowMs ?? 10 * 60_000);
   // Each create or join counts; a rematch stays in its room and doesn't.
   const matchLimit = rateLimiter(opts.matchRateLimit?.max ?? 30, opts.matchRateLimit?.windowMs ?? 10 * 60_000);
+  // A game sends two reports (start and finish), so this allows about 30 games in 10 minutes. Past
+  // that the reports are refused: they're only news for the chat, and the chat shouldn't flood.
+  const eventLimit = rateLimiter(opts.eventRateLimit?.max ?? 60, opts.eventRateLimit?.windowMs ?? 10 * 60_000);
+  const notify = opts.notify ?? silent;
   const matches = new Matches({
     ...opts.match,
     onRound: (r) => {
@@ -252,6 +262,17 @@ export function createApp(opts: AppOptions): AppServer {
       const at = now();
       if (!gameLimit(rateKey(clientIp(req)), at.getTime())) return json(res, 429, { error: 'too many games, try again later' });
       return json(res, 201, { id: db.addGame(checked.value, at) });
+    }
+
+    if (path === '/api/events') {
+      const body = await postedJson(req, res);
+      if (body === undefined) return;
+      const checked = validateEvent(body);
+      if (!checked.ok) return json(res, 400, { error: checked.error });
+      if (!eventLimit(rateKey(clientIp(req)), now().getTime())) return json(res, 429, { error: 'too many events, try again later' });
+      // Not awaited: the game doesn't wait on Telegram, and notify never throws.
+      void notify(eventMessage(checked.value));
+      return json(res, 202, { ok: true });
     }
 
     if (path === '/api/scores') {
