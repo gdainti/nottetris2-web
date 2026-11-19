@@ -72,8 +72,8 @@ function write(key: string, value: unknown) {
 
 export function loadSettings(): Settings {
   const s = { ...DEFAULT_SETTINGS, ...(read<Partial<Settings>>(SETTINGS_KEY) ?? {}) };
-  // A mode that no longer exists (Stack) falls back to the default
-  if (!GAME_MODES.includes(s.mode)) s.mode = DEFAULT_SETTINGS.mode;
+  // A mode that no longer exists (Stack) falls back to the default, and so does Online (see saveSettings)
+  if (!GAME_MODES.includes(s.mode) || s.mode === 'online') s.mode = DEFAULT_SETTINGS.mode;
   if (!TOUCH_CONTROLS.includes(s.touchControls)) s.touchControls = DEFAULT_SETTINGS.touchControls;
   if (!MOVE_SIDES.includes(s.moveSide)) s.moveSide = DEFAULT_SETTINGS.moveSide;
   if (typeof s.attacks !== 'boolean') s.attacks = DEFAULT_SETTINGS.attacks;
@@ -81,8 +81,9 @@ export function loadSettings(): Settings {
   return s;
 }
 
+/** Online is never remembered: it goes in as Cut, so Online is always picked on purpose. */
 export function saveSettings(s: Settings) {
-  write(SETTINGS_KEY, s);
+  write(SETTINGS_KEY, s.mode === 'online' ? { ...s, mode: DEFAULT_SETTINGS.mode } : s);
 }
 
 let player: string | null = null;

@@ -322,8 +322,17 @@ function showLeaderboard() {
   loadBoards(view, fetchBoards());
 }
 
-/** `focus`: the row to select (by default Start). */
-function showModeSelect(focus?: number) {
+/**
+ * Opens the Game type screen. Each visit starts on Cut rather than Online (the other settings stay
+ * as they were), so the player always picks Online themselves.
+ */
+function showModeSelect() {
+  if (settings.mode === 'online') settings.mode = 'cut';
+  modeScreen();
+}
+
+/** Draws the Game type screen as it is (also when switching modes on it). `focus`: the row to select (by default Start). */
+function modeScreen(focus?: number) {
   leaveMatch();
   state = 'menu';
   game = null;
@@ -346,7 +355,7 @@ function showModeSelect(focus?: number) {
         set: (i) => {
           settings.mode = MODES[i];
           saveSettings(settings);
-          if ((settings.mode !== 'cut') !== versus) showModeSelect(0);
+          if ((settings.mode !== 'cut') !== versus) modeScreen(0);
         },
       },
       ...(versus
