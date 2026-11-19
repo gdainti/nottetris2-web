@@ -143,7 +143,9 @@ export interface MatchRecord {
   hostTSpinPoints: number | null;
   guestTSpins: number | null;
   guestTSpinPoints: number | null;
-  /** finished: both topped out; host-left / guest-left: who left (or dropped) first; restart: the server stopped */
+  /** Who won a finished round (the other player topped out first); null otherwise */
+  winner: 'host' | 'guest' | null;
+  /** finished: both reported a score (the loser on topping out, the winner when told); host-left / guest-left: who left (or dropped) first; restart: the server stopped */
   ended: 'finished' | 'host-left' | 'guest-left' | 'restart';
   durationMs: number;
 }
@@ -274,16 +276,9 @@ export class ScoreDb {
     return Number(r.lastInsertRowid);
   }
 
-  /** Logs an online Versus round. The winner follows from the scores of a finished round. */
+  /** Logs an online Versus round. Rounds logged before the first-to-top-out rule may say 'draw'. */
   addMatch(m: MatchRecord, at: Date): number {
-    const winner =
-      m.ended !== 'finished' || m.hostScore === null || m.guestScore === null
-        ? null
-        : m.hostScore > m.guestScore
-          ? 'host'
-          : m.guestScore > m.hostScore
-            ? 'guest'
-            : 'draw';
+    const winner = m.ended === 'finished' ? m.winner : null;
     const r = this.sql
       .prepare(
         `INSERT INTO match (room, round, host, guest, host_score, guest_score, host_t_spins, host_t_spin_points,

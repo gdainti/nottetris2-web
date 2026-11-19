@@ -122,9 +122,10 @@ the server picks for each round (`seededKinds` in `src/pieces.ts`, integer maths
 browser makes the same sequence), dealt in the piece order of whoever created the game (`pieces`
 in `create`, passed to both in each round's `start`; random when a client doesn't say).
 
-The server (`server/match.ts`) only pairs the two connections and passes their messages on. Each
-player reports a final score when they top out; once both have, the server sends both scores to
-both, so they can't disagree on who won. If either player leaves or drops, the room closes and the
+The server (`server/match.ts`) only pairs the two connections and passes their messages on. Whoever
+tops out first loses: they report their score, the server tells the other player they won
+(`won`), and that player's field stops where it is and reports its score too. The server then
+sends both scores and who won to both, so they can't disagree. If either player leaves or drops, the room closes and the
 other is told.
 
 There is no pause online: both games run at the same time. The Pause button becomes Leave, and
@@ -288,7 +289,7 @@ The itch page's cover, screenshots and gameplay GIF are in `itch/screenshots/`.
 | Mode   | Original | Rules |
 | ------ | -------- | ----- |
 | Cut    | Game A   | Endless. A row is cut out when it holds 8.1 blocks' worth of area. Score = `ceil((n·3)^(avg^10)·20 + n²·40)` for `n` rows at average density `avg`. Level up every 10 rows (+7 px/s fall speed). A T-spin (a joke, since real ones can't happen here) is a falling T turning a full circle, once per piece: +100. |
-| Versus | 2P       | Two Cut fields side by side, same piece sequence (mirrored for player 1). Both play until they top out; higher score wins. With attacks on, cuts drop blocks on the other player (see Attacks). |
+| Versus | 2P       | Two Cut fields side by side, same piece sequence (mirrored for player 1). Whoever tops out first loses, and the game ends for both (both in the same moment is a draw). With attacks on, cuts drop blocks on the other player (see Attacks). |
 | Online | —        | Versus against a player on another device, joined by a code. Each player's own field is full size; the other player's is drawn small beside it. Same pieces for both, not mirrored. Attacks as in Versus. |
 
 The **Pieces** setting on the Game type screen picks how the next piece is chosen, in every mode:
