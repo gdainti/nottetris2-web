@@ -3,8 +3,9 @@
 // and streams what it looks like to the other, so nothing here knows about the game's physics.
 //
 // Client -> server (JSON text messages)
-//   { t: 'create', player?, attacks? }  first message: open a room (player: the browser's random id;
-//                                 attacks: cutting rows sends blocks, the host's setting, on unless false)
+//   { t: 'create', player?, attacks?, pieces? }  first message: open a room (player: the browser's
+//                                 random id; attacks: cutting rows sends blocks, the host's setting,
+//                                 on unless false; pieces: 'bag' for the 7-bag, otherwise random)
 //   { t: 'join', code, player? }  first message: join a room
 //   { t: 'state', ... }           passed on to the other player as is
 //   { t: 'attack', n }            this player's cut sends the other n blocks (1 to MAX_ATTACK)
@@ -12,7 +13,7 @@
 //   { t: 'rematch' }              after a result: play again
 // Server -> client
 //   { t: 'room', code }           the room is open, waiting for the other player
-//   { t: 'start', seed, round, attacks }  both are in: start a round with this piece seed
+//   { t: 'start', seed, round, attacks, pieces }  both are in: start a round with this piece seed
 //   { t: 'state', ... }           the other player's field
 //   { t: 'attack', n }            blocks from the other player
 //   { t: 'result', you, them }    both have topped out: the two final scores
@@ -77,6 +78,8 @@ interface Room {
   logged: boolean;
   /** Cutting rows sends the other player blocks (the host's choice) */
   attacks: boolean;
+  /** How the seed turns into pieces (the host's choice); random for clients that don't say */
+  pieces: 'bag' | 'random';
 }
 
 /** Normalises a typed code: upper case, without spaces or dashes. Null when it can't be one. */
@@ -158,7 +161,7 @@ export class Matches {
         if (msg.t === 'create') {
           if (this.rooms.size >= this.maxRooms) return refuse('busy');
           me = { conn, id, score: null, rematch: false, lastAttack: 0 };
-          room = this.open(me, msg.attacks !== false);
+          room = this.open(me, msg.attacks !== false, msg.pieces === 'bag' ? 'bag' : 'random');
           conn.send(JSON.stringify({ t: 'room', code: room.code }));
         } else {
           const code = normalizeCode(msg.code);
@@ -231,7 +234,7 @@ export class Matches {
     for (const conn of [...this.conns]) conn.close(CLOSE.goingAway, 'server restarting');
   }
 
-  private open(host: Player, attacks: boolean): Room {
+  private open(host: Player, attacks: boolean, pieces: Room['pieces']): Room {
     let code = '';
     do {
       code = '';
@@ -246,6 +249,7 @@ export class Matches {
       startedAt: 0,
       logged: false,
       attacks,
+      pieces,
     };
     room.waitTimer = setTimeout(() => host.conn.close(CLOSE.normal, 'nobody joined'), this.waitMs);
     room.waitTimer.unref();
@@ -261,7 +265,7 @@ export class Matches {
       p.score = null;
       p.rematch = false;
       p.lastAttack = 0;
-      p.conn.send(JSON.stringify({ t: 'start', seed, round: room.round, attacks: room.attacks }));
+      p.conn.send(JSON.stringify({ t: 'start', seed, round: room.round, attacks: room.attacks, pieces: room.pieces }));
     }
   }
 

@@ -1,6 +1,7 @@
 // The connection to the server's online Versus rooms (server/match.ts has the message list).
 
 import type { StateMsg } from './online';
+import type { PieceOrder } from './pieces';
 
 /**
  * Why a room couldn't be used: the server's refusals, plus `offline` (couldn't connect at all) and
@@ -10,7 +11,7 @@ export type MatchError = 'not-found' | 'full' | 'busy' | 'limit' | 'offline' | '
 
 export interface MatchEvents {
   room?(code: string): void;
-  start?(seed: number, round: number, attacks: boolean): void;
+  start?(seed: number, round: number, attacks: boolean, pieces: PieceOrder): void;
   attack?(blocks: number): void;
   state?(msg: StateMsg): void;
   result?(you: number, them: number): void;
@@ -27,7 +28,9 @@ export class MatchSocket {
   private done = false;
 
   /** `player`: the browser's random id (storage.ts), so the server's match log can tell players apart */
-  constructor(hello: { t: 'create'; player: string; attacks: boolean } | { t: 'join'; code: string; player: string }) {
+  constructor(
+    hello: { t: 'create'; player: string; attacks: boolean; pieces: PieceOrder } | { t: 'join'; code: string; player: string },
+  ) {
     // Relative, like the leaderboard calls, so the game works from any path
     const url = new URL('api/match', location.href);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -55,7 +58,8 @@ export class MatchSocket {
           on.room?.(String(m.code));
           break;
         case 'start':
-          on.start?.(Number(m.seed), Number(m.round), m.attacks === true);
+          // A server from before the setting sends none, and then both players get random pieces
+          on.start?.(Number(m.seed), Number(m.round), m.attacks === true, m.pieces === 'bag' ? 'bag' : 'random');
           break;
         case 'attack':
           if (Number.isInteger(m.n) && (m.n as number) > 0) on.attack?.(m.n as number);

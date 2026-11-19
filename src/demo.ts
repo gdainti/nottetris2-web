@@ -1,14 +1,14 @@
 import * as C from './config';
 import { type Controls, Field, NO_CONTROLS } from './field';
 import { toWorld } from './geometry';
-import { randomKind } from './pieces';
+import { pieceSequence } from './pieces';
 
 /**
  * Self-playing field behind the title screen. A tiny autopilot steers each piece
  * towards the lowest part of the stack, keeping it roughly axis-aligned.
  */
 export class Demo {
-  field = new Field({ pickKind: randomKind });
+  field = new Field({ pickKind: pieceSequence('random') });
   private target: { x: number; angle: number } | null = null;
   private piece: unknown = null;
 
@@ -20,7 +20,7 @@ export class Demo {
     const f = this.field;
     if (f.state === 'toppedOut') f.startFallout();
     if (f.state === 'over') {
-      this.field = new Field({ pickKind: randomKind });
+      this.field = new Field({ pickKind: pieceSequence('random') });
       this.field.start();
       return;
     }

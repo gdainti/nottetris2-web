@@ -78,10 +78,10 @@ describe('online rooms', () => {
   });
 
   /** Opens a room and joins it; returns both players once both got their start. */
-  async function pair(ids: [unknown, unknown] = [undefined, undefined], attacks?: boolean) {
+  async function pair(ids: [unknown, unknown] = [undefined, undefined], attacks?: boolean, pieces?: unknown) {
     const a = new Client(url);
     await a.opened;
-    a.send({ t: 'create', player: ids[0], attacks });
+    a.send({ t: 'create', player: ids[0], attacks, pieces });
     const room = await a.next();
     assert.equal(room.t, 'room');
     const b = new Client(url);
@@ -296,6 +296,21 @@ describe('online rooms', () => {
     assert.equal(off.sb.attacks, false);
     off.a.close();
     off.b.close();
+  });
+
+  test('start passes on the host piece order: bag when asked for, random otherwise', async () => {
+    const bag = await pair(undefined, undefined, 'bag');
+    assert.equal(bag.sa.pieces, 'bag');
+    assert.equal(bag.sb.pieces, 'bag');
+    bag.a.close();
+    bag.b.close();
+    for (const asked of [undefined, 'random', 'nonsense', 7]) {
+      const r = await pair(undefined, undefined, asked);
+      assert.equal(r.sa.pieces, 'random', String(asked));
+      assert.equal(r.sb.pieces, 'random', String(asked));
+      r.a.close();
+      r.b.close();
+    }
   });
 
   test('attacks go to the other player, at most one a second and 1 to 5 blocks', async () => {

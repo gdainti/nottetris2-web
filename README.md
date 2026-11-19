@@ -119,7 +119,8 @@ of new bodies (pieces and cut fragments), the row meter when it changes, the sco
 piece. That is about 200 bytes a message, some 4 kB/s. The receiving side draws the other field
 0.12 s in the past and moves smoothly between messages. Both fields get the same pieces from a seed
 the server picks for each round (`seededKinds` in `src/pieces.ts`, integer maths only, so every
-browser makes the same sequence).
+browser makes the same sequence), dealt in the piece order of whoever created the game (`pieces`
+in `create`, passed to both in each round's `start`; random when a client doesn't say).
 
 The server (`server/match.ts`) only pairs the two connections and passes their messages on. Each
 player reports a final score when they top out; once both have, the server sends both scores to
@@ -264,6 +265,16 @@ The itch page's cover, screenshots and gameplay GIF are in `itch/screenshots/`.
 | Cut    | Game A   | Endless. A row is cut out when it holds 8.1 blocks' worth of area. Score = `ceil((n·3)^(avg^10)·20 + n²·40)` for `n` rows at average density `avg`. Level up every 10 rows (+7 px/s fall speed). |
 | Versus | 2P       | Two Cut fields side by side, same piece sequence (mirrored for player 1). Both play until they top out; higher score wins. With attacks on, cuts drop blocks on the other player (see Attacks). |
 | Online | —        | Versus against a player on another device, joined by a code. Each player's own field is full size; the other player's is drawn small beside it. Same pieces for both, not mirrored. Attacks as in Versus. |
+
+The **Pieces** setting on the Game type screen picks how the next piece is chosen, in every mode:
+
+- **7-bag** (the default, as in modern Tetris): all seven pieces go in a bag in a shuffled order and
+  are dealt one by one, then a new bag is filled. A kind comes up at most twice in a row (the end
+  of one bag and the start of the next) and never waits more than 12 pieces.
+- **Random** (as in the original): every piece is picked on its own, so long runs of one kind and
+  long droughts can happen.
+
+Online, the setting of whoever creates the game counts.
 
 ## Controls
 

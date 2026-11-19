@@ -1,3 +1,5 @@
+import { PIECE_ORDERS, type PieceOrder } from './pieces';
+
 export type GameMode = 'cut' | 'versus' | 'online';
 const GAME_MODES: GameMode[] = ['cut', 'versus', 'online'];
 export type ThemeName = 'modern' | 'retro';
@@ -18,6 +20,8 @@ export interface Settings {
   moveSide: MoveSide;
   /** Versus and Online: cutting rows sends the other player blocks (online, the host's setting counts) */
   attacks: boolean;
+  /** How the next piece is chosen, 7-bag or fully random (online, the host's setting counts) */
+  pieces: PieceOrder;
 }
 
 export type TouchControls = 'drag' | 'buttons';
@@ -46,6 +50,7 @@ const DEFAULT_SETTINGS: Settings = {
   touchControls: 'drag',
   moveSide: 'left',
   attacks: true,
+  pieces: 'bag',
 };
 
 function read<T>(key: string): T | null {
@@ -67,16 +72,18 @@ function write(key: string, value: unknown) {
 
 export function loadSettings(): Settings {
   const s = { ...DEFAULT_SETTINGS, ...(read<Partial<Settings>>(SETTINGS_KEY) ?? {}) };
-  // A mode that no longer exists (Stack) falls back to the default
-  if (!GAME_MODES.includes(s.mode)) s.mode = DEFAULT_SETTINGS.mode;
+  // A mode that no longer exists (Stack) falls back to the default, and so does Online (see saveSettings)
+  if (!GAME_MODES.includes(s.mode) || s.mode === 'online') s.mode = DEFAULT_SETTINGS.mode;
   if (!TOUCH_CONTROLS.includes(s.touchControls)) s.touchControls = DEFAULT_SETTINGS.touchControls;
   if (!MOVE_SIDES.includes(s.moveSide)) s.moveSide = DEFAULT_SETTINGS.moveSide;
   if (typeof s.attacks !== 'boolean') s.attacks = DEFAULT_SETTINGS.attacks;
+  if (!PIECE_ORDERS.includes(s.pieces)) s.pieces = DEFAULT_SETTINGS.pieces;
   return s;
 }
 
+/** Online is never remembered: it goes in as Cut, so Online is always picked on purpose. */
 export function saveSettings(s: Settings) {
-  write(SETTINGS_KEY, s);
+  write(SETTINGS_KEY, s.mode === 'online' ? { ...s, mode: DEFAULT_SETTINGS.mode } : s);
 }
 
 let player: string | null = null;
