@@ -666,6 +666,22 @@ table.board td.sub {
   border-color: var(--accent);
 }
 
+/* Online: the room code, and the field it is typed into */
+.big.code {
+  font-size: calc(var(--s) * 52px);
+  letter-spacing: 0.18em;
+  text-indent: 0.18em;
+  margin: 0 0 calc(var(--s) * 14px);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.namefield input.code {
+  text-align: center;
+  font-size: calc(var(--s) * 28px);
+  letter-spacing: 0.2em;
+}
+
 .footer {
   margin: calc(var(--s) * 18px) 0 0;
   text-align: center;

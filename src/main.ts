@@ -3,10 +3,11 @@ import { audio, TRACKS } from './audio';
 import { STEP } from './config';
 import { Demo } from './demo';
 import { logoHtml } from './logo';
-import { H, SINGLE_W, SingleGame, VersusGame } from './games';
+import { H, OnlineGame, SINGLE_W, SingleGame, VersusGame } from './games';
 import { clearTouch, pollPadPresses, setTouch, setTouchMove, setTouchSpin, suppressHeldKeys } from './input';
 import { COLORS, drawBackground, drawField, setTheme } from './render';
 import { ANON, type Boards, fetchBoards, NAME_MAX, normalizeName, recordGame, submitScore, type Submitted } from './api';
+import { CODE_LENGTH, type MatchError, MatchSocket, normalizeCode } from './net';
 import {
   type GameMode,
   type ThemeName,
@@ -41,14 +42,14 @@ const menu = new Menu(overlay, (s) => audio.play(s));
 
 type AppState = 'title' | 'menu' | 'game' | 'paused' | 'gameover' | 'results';
 let state: AppState = 'title';
-let game: SingleGame | VersusGame | null = null;
+let game: SingleGame | VersusGame | OnlineGame | null = null;
 let demo = new Demo();
 let logicalW = SINGLE_W;
 let scale = 1;
 let cssScale = 1;
 
-const MODES: GameMode[] = ['cut', 'versus'];
-const MODE_NAMES: Record<GameMode, string> = { cut: 'Cut', versus: 'Versus' };
+const MODES: GameMode[] = ['cut', 'versus', 'online'];
+const MODE_NAMES: Record<GameMode, string> = { cut: 'Cut', versus: 'Versus', online: 'Online' };
 const THEMES: ThemeName[] = ['modern', 'retro'];
 const THEME_NAMES: Record<ThemeName, string> = { modern: 'Modern', retro: 'Retro' };
 const isCoarse = window.matchMedia('(pointer: coarse)').matches;
@@ -83,11 +84,18 @@ function fit() {
   updateHud();
 }
 
-/** Shows the HTML pause button over the game's HUD slot while a game is running. */
+const PAUSE_HTML = pauseBtn.innerHTML;
+const LEAVE_HTML = 'Leave <span class="kbd">Esc</span>';
+
+/** Shows the HTML pause button over the game's HUD slot while a game is running (Leave, online). */
 function updateHud() {
   const rect = state === 'game' && game ? game.pauseRect : null;
   pauseBtn.hidden = !rect;
   if (!rect) return;
+  const online = game?.type === 'online';
+  const html = online ? LEAVE_HTML : PAUSE_HTML;
+  if (pauseBtn.innerHTML !== html) pauseBtn.innerHTML = html;
+  pauseBtn.setAttribute('aria-label', online ? 'Leave' : 'Pause');
   pauseBtn.style.left = `${rect.x * cssScale}px`;
   pauseBtn.style.top = `${rect.y * cssScale}px`;
   pauseBtn.style.width = `${rect.w * cssScale}px`;
@@ -130,7 +138,7 @@ applyTouchLayout();
 
 function updateTouch() {
   // Still shown while paused, so the board keeps its size and Options changes show at once.
-  const show = isCoarse && (state === 'game' || state === 'paused') && game?.type === 'single';
+  const show = isCoarse && (state === 'game' || state === 'paused') && (game?.type === 'single' || game?.type === 'online');
   const live = show && state === 'game';
   if (touchEl.hidden === show) {
     touchEl.hidden = !show;
@@ -158,6 +166,7 @@ function startMusic(restart = false) {
 // ------------------------------------------------------------------ screens
 
 function showTitle() {
+  leaveMatch();
   state = 'title';
   game = null;
   startMusic();
@@ -183,11 +192,12 @@ function modeInfo(mode: GameMode): string {
   const text: Record<GameMode, string> = {
     cut: 'Endless. A row is sliced out when it holds 8.1 blocks’ worth of area, cutting right through the pieces. Tighter rows score more. Every 10 rows the pieces fall faster.',
     versus: 'Two players, one keyboard (or two gamepads). Same pieces, mirrored for player 1, and rows are cut as in Cut. Once both have topped out, the higher score wins.',
+    online: 'Two players, each on their own device. Create a game and tell the other player its code, or join theirs with the code they give you. Same pieces for both; once both have topped out, the higher score wins.',
   };
   let out = `<p class="info">${text[mode]}</p>`;
   if (mode === 'versus') {
     out += `<div class="keys"><div><b>Player 1</b>A D move · S down · Q E rotate</div><div><b>Player 2</b>J L move · K down · U O rotate<br><span>or ← → ↓ and , .</span></div></div>`;
-  } else {
+  } else if (mode === 'cut') {
     out += scoreTable(-1);
   }
   return out;
@@ -303,6 +313,7 @@ function showLeaderboard() {
 }
 
 function showModeSelect() {
+  leaveMatch();
   state = 'menu';
   game = null;
   setLayout(SINGLE_W);
@@ -335,7 +346,7 @@ function showModeSelect() {
           startMusic();
         },
       },
-      { type: 'button', label: 'Start', action: startGame, primary: true },
+      { type: 'button', label: 'Start', action: () => (settings.mode === 'online' ? showOnline() : startGame()), primary: true },
     ],
     initial: 2,
     html: () => modeInfo(settings.mode),
@@ -444,7 +455,8 @@ function startGame() {
 
 function pause() {
   if (state !== 'game' || !game) return;
-  if (game.type === 'versus' && game.phase === 'done') return;
+  if (game.type !== 'single' && game.phase === 'done') return;
+  if (game.type === 'online') return confirmLeave();
   game.paused = true;
   state = 'paused';
   audio.pauseMusic();
@@ -462,6 +474,33 @@ function pause() {
     footer: 'Esc also resumes · M mute · F fullscreen',
     onBack: resume,
   });
+}
+
+/**
+ * Online there is no pause: both games run at the same time. Esc, P or the Leave button only ask
+ * whether to leave, and the game goes on underneath (without this player's controls) meanwhile.
+ */
+function confirmLeave() {
+  state = 'paused';
+  updateTouch();
+  menu.show({
+    title: 'Leave the game?',
+    subtitle: 'Your game keeps running while this is open.',
+    className: 'compact',
+    items: [
+      { type: 'button', label: 'Keep playing', keyLabel: 'Esc', action: keepPlaying },
+      { type: 'button', label: 'Leave game', keys: ['KeyQ'], keyLabel: 'Q', action: () => showOnline() },
+    ],
+    onBack: keepPlaying,
+  });
+}
+
+function keepPlaying() {
+  if (state !== 'paused') return;
+  menu.hide();
+  state = 'game';
+  suppressHeldKeys();
+  updateTouch();
 }
 
 function pauseMenuAgain() {
@@ -597,6 +636,266 @@ function showVersusResults() {
   });
 }
 
+// ------------------------------------------------------------------ online versus
+
+interface Match {
+  socket: MatchSocket;
+  /** Rounds won in this room: [this player, the other] */
+  wins: [number, number];
+  /** This player, or the other, asked for a rematch after the last round */
+  rematch: boolean;
+  theyRematch: boolean;
+  /** Why the room ended after a round was decided (the other player left, or the connection dropped) */
+  gone: string | null;
+}
+
+let match: Match | null = null;
+
+function leaveMatch() {
+  match?.socket.close();
+  match = null;
+}
+
+function matchError(e: MatchError): string {
+  switch (e) {
+    case 'not-found':
+      return 'There is no game with that code. Check it, or ask for a new one.';
+    case 'full':
+      return 'That game already has two players.';
+    case 'busy':
+      return 'The server is full right now. Try again in a minute.';
+    case 'limit':
+      return 'Too many tries from here. Wait a few minutes.';
+    case 'offline':
+      return 'The game server can’t be reached right now.';
+    case 'lost':
+      return 'The connection to the game server was lost.';
+  }
+}
+
+function showOnline(note = '') {
+  leaveMatch();
+  state = 'menu';
+  game = null;
+  setLayout(SINGLE_W);
+  updateTouch();
+  startMusic();
+  menu.show({
+    title: 'Online',
+    subtitle: 'Play against someone on another device.',
+    items: [
+      { type: 'button', label: 'Create a game', action: createMatch, primary: true },
+      { type: 'button', label: 'Join with a code', action: () => showJoin('') },
+    ],
+    html: () =>
+      (note ? `<p class="rankline warn">${esc(note)}</p>` : '') +
+      '<p class="info">Create a game and tell the other player its code, or type in the code they give you. You both get the same pieces. Once both have topped out, the higher score wins.</p>',
+    onBack: showModeSelect,
+    backButton: true,
+  });
+}
+
+/** A screen to look at while the server answers. */
+function showConnecting(title: string, back: () => void) {
+  menu.show({
+    title,
+    className: 'compact',
+    html: () => '<p class="info center">Connecting…</p>',
+    items: [{ type: 'button', label: 'Cancel', action: back }],
+    onBack: back,
+  });
+}
+
+function createMatch() {
+  leaveMatch();
+  const socket = new MatchSocket({ t: 'create', player: playerId() });
+  match = { socket, wins: [0, 0], rematch: false, theyRematch: false, gone: null };
+  socket.on = {
+    room: showWaiting,
+    start: startOnline,
+    error: (e) => showOnline(matchError(e)),
+  };
+  showConnecting('Create a game', () => showOnline());
+}
+
+function showWaiting(code: string) {
+  menu.show({
+    title: 'Invite a player',
+    className: 'compact',
+    htmlFirst: true,
+    html: () =>
+      `<p class="info center">Give the other player this code</p><p class="big code">${esc(code)}</p>` +
+      '<p class="info center">They pick Online → Join with a code. The game starts as soon as they join.</p>',
+    items: [{ type: 'button', label: 'Cancel', keyLabel: 'Esc', action: () => showOnline() }],
+    onBack: () => showOnline(),
+  });
+}
+
+function showJoin(code: string, note = '') {
+  leaveMatch();
+  state = 'menu';
+  game = null;
+  setLayout(SINGLE_W);
+  updateTouch();
+  const submit = () => {
+    const input = overlay.querySelector<HTMLInputElement>('input.code');
+    const typed = normalizeCode(input?.value ?? '');
+    if (!typed) {
+      overlay.querySelector('.namefield')?.classList.add('bad');
+      audio.play('back');
+      input?.focus();
+      return;
+    }
+    joinMatch(typed);
+  };
+  menu.show({
+    title: 'Join a game',
+    className: 'compact',
+    htmlFirst: true,
+    html: () =>
+      (note ? `<p class="rankline warn">${esc(note)}</p>` : '') +
+      `<label class="namefield">Code<input class="code" maxlength="${CODE_LENGTH + 1}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD" value="${esc(code)}"></label>` +
+      `<p class="hint">${CODE_LENGTH} letters and digits, from the player who created the game</p>`,
+    items: [
+      { type: 'button', label: 'Join', keyLabel: '↵', action: submit, primary: true },
+      { type: 'button', label: 'Back', keyLabel: 'Esc', action: () => showOnline() },
+    ],
+    onBack: () => showOnline(),
+    afterRender: (root) => {
+      const input = root.querySelector<HTMLInputElement>('input.code');
+      if (!input) return;
+      input.focus();
+      input.select();
+      input.addEventListener('input', () => root.querySelector('.namefield')?.classList.remove('bad'));
+      input.addEventListener('keydown', (e) => {
+        if (e.code !== 'Enter' && e.code !== 'NumpadEnter') return;
+        e.preventDefault();
+        e.stopPropagation();
+        audio.play('select');
+        submit();
+      });
+    },
+  });
+}
+
+function joinMatch(code: string) {
+  leaveMatch();
+  const socket = new MatchSocket({ t: 'join', code, player: playerId() });
+  match = { socket, wins: [0, 0], rematch: false, theyRematch: false, gone: null };
+  socket.on = {
+    start: startOnline,
+    error: (e) => showJoin(code, matchError(e)),
+  };
+  showConnecting(`Joining ${code}`, () => showJoin(code));
+}
+
+/** Starts a round in the current room (the first one, or a rematch). */
+function startOnline(seed: number) {
+  const m = match;
+  if (!m) return;
+  m.rematch = false;
+  m.theyRematch = false;
+  menu.hide();
+  audio.unlock();
+  audio.stopMusic();
+  suppressHeldKeys();
+  const g = new OnlineGame(seed, m.wins, (msg) => m.socket.send(msg), startMusic, showOnlineResults);
+  game = g;
+  m.socket.on = {
+    state: (s) => g.receive(s),
+    result: (you, them) => g.finish(you, them),
+    rematch: () => {
+      m.theyRematch = true;
+      if (state === 'results') menu.refresh();
+    },
+    start: startOnline,
+    left: () => matchGone('The other player left.'),
+    error: (e) => matchGone(matchError(e)),
+  };
+  setLayout(g.width);
+  state = 'game';
+  updateTouch();
+}
+
+/**
+ * The room is gone. Before the round is decided that ends the game; after it, the result stays on
+ * show and only the rematch goes.
+ */
+function matchGone(text: string) {
+  const m = match;
+  if (m && game instanceof OnlineGame && game.result) {
+    m.gone = text;
+    if (state === 'results') showOnlineResults(false);
+    return;
+  }
+  showMatchOver(text);
+}
+
+function showOnlineResults(first = true) {
+  const g = game as OnlineGame;
+  const m = match;
+  if (!m || !g.result) return;
+  state = 'results';
+  updateTouch();
+  const { you, them } = g.result;
+  if (first && you > them) audio.play('highscore');
+  const status = () => {
+    if (m.gone) return esc(m.gone);
+    if (m.rematch) return 'Waiting for the other player…';
+    if (m.theyRematch) return 'The other player wants a rematch!';
+    return '&nbsp;';
+  };
+  menu.show({
+    title: you > them ? 'You win!' : them > you ? 'You lose' : 'Draw!',
+    className: 'compact',
+    htmlFirst: true,
+    html: () =>
+      `<div class="stats"><div><span>You</span><b>${you}</b></div><div><span>Opponent</span><b>${them}</b></div></div>` +
+      `<p class="info center">Wins ${m.wins[0]} – ${m.wins[1]}</p><p class="rankline">${status()}</p>`,
+    items: m.gone
+      ? [
+          { type: 'button', label: 'Play online again', action: () => showOnline(), primary: true },
+          { type: 'button', label: 'Change mode', action: showModeSelect },
+        ]
+      : [
+          {
+            type: 'button',
+            label: 'Rematch',
+            primary: true,
+            action: () => {
+              if (m.rematch) return;
+              m.rematch = true;
+              m.socket.send({ t: 'rematch' });
+              menu.refresh();
+            },
+          },
+          { type: 'button', label: 'Leave', action: () => showOnline() },
+        ],
+    onBack: () => showOnline(),
+  });
+}
+
+/** The room is gone (the other player left, or the connection dropped). */
+function showMatchOver(text: string) {
+  const wins = match?.wins ?? [0, 0];
+  leaveMatch();
+  if (game) game.paused = true;
+  audio.stopMusic();
+  state = 'results';
+  updateTouch();
+  menu.show({
+    title: 'Game over',
+    className: 'compact',
+    htmlFirst: true,
+    html: () => `<p class="info center">${esc(text)}</p><p class="info center">Wins ${wins[0]} – ${wins[1]}</p>`,
+    items: [
+      { type: 'button', label: 'Play online again', action: () => showOnline(), primary: true },
+      { type: 'button', label: 'Change mode', action: showModeSelect },
+    ],
+    onBack: showModeSelect,
+  });
+}
+
 function toggleFullscreen() {
   if (document.fullscreenElement) void document.exitFullscreen();
   else void document.documentElement.requestFullscreen?.().catch(() => {});
@@ -639,10 +938,13 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('pointerdown', () => audio.unlock());
+// Online games don't pause: they keep going in the background (see advance())
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) pause();
+  if (document.hidden && game?.type !== 'online') pause();
 });
-window.addEventListener('blur', () => pause());
+window.addEventListener('blur', () => {
+  if (game?.type !== 'online') pause();
+});
 
 // Keep the button from taking keyboard focus, so Space/Enter never "click" it again later.
 pauseBtn.addEventListener('pointerdown', (e) => e.preventDefault());
@@ -783,25 +1085,60 @@ function draw(alpha: number) {
   }
 }
 
+/** Longest stretch of missed time an online game makes up (a phone app suspended for a while) */
+const CATCH_UP_MAX = 600;
+
 let last = performance.now();
 let acc = 0;
-function frame(now: number) {
-  const dt = Math.min(0.1, (now - last) / 1000);
+
+/**
+ * Runs the physics steps due by `now`. Elsewhere a long gap (a background tab gets no frames) is
+ * simply skipped, which pauses the game. Online the other player doesn't wait, so missed time is
+ * made up: up to 30 steps a frame when drawn (a fast-forward, with this player's controls off), and
+ * up to a minute's worth per call in a background tab, where nothing is drawn.
+ */
+function advance(now: number, hidden: boolean) {
+  const online = game instanceof OnlineGame ? game : null;
+  acc += Math.min(online ? CATCH_UP_MAX : 0.1, (now - last) / 1000);
   last = now;
-  pollPadPresses((code) => {
-    if (menu.active || code === 'Enter') handleKey(code);
-  });
-  acc += dt;
+  const max = !online ? 6 : hidden ? 3600 : 30;
+  if (online) online.inputOff = menu.active || acc > 0.25;
   let steps = 0;
-  while (acc >= STEP && steps < 6) {
+  while (acc >= STEP && steps < max) {
     tick(STEP);
     acc -= STEP;
     steps++;
   }
-  if (steps === 6) acc = 0;
-  draw(acc / STEP);
+  if (!online && steps === max) acc = 0;
+  online?.sendState(now);
+}
+
+function frame(now: number) {
+  pollPadPresses((code) => {
+    if (menu.active || code === 'Enter') handleKey(code);
+  });
+  advance(now, false);
+  draw(Math.min(1, acc / STEP));
   requestAnimationFrame(frame);
 }
+
+// A background tab gets no animation frames, so an online game runs on a clock there instead: the
+// ticker worker, 20 times a second, so the other player still sees this field move smoothly. The
+// page's own timer is the fallback; browsers slow that to about once a second in a background tab
+// (each call then catches up on the time since the last).
+const backgroundTick = () => {
+  if (document.hidden && game?.type === 'online') advance(performance.now(), true);
+};
+let ticker: Worker | null = null;
+try {
+  ticker = new Worker(new URL('./ticker.ts', import.meta.url), { type: 'module' });
+  ticker.addEventListener('message', backgroundTick);
+  ticker.postMessage(document.hidden);
+} catch {
+  ticker = null;
+}
+document.addEventListener('visibilitychange', () => ticker?.postMessage(document.hidden));
+window.setInterval(backgroundTick, 250);
 
 applyTheme();
 fit();

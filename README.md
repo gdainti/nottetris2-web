@@ -20,8 +20,9 @@ npm run dev       # the game, with hot reload
 npm run server    # in a second terminal: the leaderboard API on :5034
 ```
 
-Open the URL Vite prints (default http://localhost:5173). Vite forwards `/api` to the server; without
-it the game still plays and shows only the scores kept in the browser.
+Open the URL Vite prints (default http://localhost:5173). Vite forwards `/api` to the server, WebSockets
+included; without it the game still plays and shows only the scores kept in the browser, but Online
+mode can't open a room.
 
 | Script              | What it does |
 | ------------------- | ------------ |
@@ -60,10 +61,11 @@ new one. Submitted scores carry the id too, and a `player_name` table keeps each
 names and devices can be found from either side. Logging allows 60 games per IP per 10 minutes. To see how much the game is played:
 
 ```sh
-docker exec slicefall node server/admin.ts stats              # games today, this week, all time; then per day
+docker exec slicefall node server/admin.ts stats              # games today, this week, all time; then per day; then online rounds
 docker exec slicefall node server/admin.ts stats 30           # ... with 30 days in the per-day table
 docker exec slicefall node server/admin.ts games 20           # latest games, "(no name)" when skipped
-docker exec slicefall node server/admin.ts player 3f9a1c07    # names and games of one player id (the first digits will do)
+docker exec slicefall node server/admin.ts matches 20         # latest online Versus rounds
+docker exec slicefall node server/admin.ts player 3f9a1c07    # names, games and online rounds of one player id (the first digits will do)
 ```
 
 ```sh
@@ -79,6 +81,55 @@ docker exec slicefall node server/admin.ts delete-name ANN    # all of a player'
 | `POST /api/games`                         | Takes `{ mode, score, lines, level, pieces, cuts, bestCut, durationMs, player? }` at every game over; returns `{ id }`. `player` is the browser's random id, 32 lowercase hex digits |
 | `POST /api/scores`                        | Takes `{ mode, name, score, lines, level, pieces, durationMs, gameId?, player? }`; returns the boards plus `weekRank` and `allTimeRank`. With `gameId`, that logged game gets the name (if it has the same `player`); with `player`, the name and id are recorded as a pair |
 | `GET /healthz`                            | `ok` when the database answers |
+| `GET /api/match` (WebSocket)              | Online Versus rooms; see below |
+
+## Online Versus
+
+One player picks Online → Create a game and gets a four-character code (no I, L, O, 0 or 1). The
+other player picks Online → Join with a code and types it in; the round starts as soon as they join.
+
+The two fields don't affect each other (there are no garbage rows), so there is no shared
+simulation. Each browser runs only its own field and sends the other one what it looks like
+(`src/online.ts`): 20 times a second, the bodies that moved since the last message, plus the shapes
+of new bodies (pieces and cut fragments), the row meter when it changes, the score and the next
+piece. That is about 200 bytes a message, some 4 kB/s. The receiving side draws the other field
+0.12 s in the past and moves smoothly between messages. Both fields get the same pieces from a seed
+the server picks for each round (`seededKinds` in `src/pieces.ts`, integer maths only, so every
+browser makes the same sequence).
+
+The server (`server/match.ts`) only pairs the two connections and passes their messages on. Each
+player reports a final score when they top out; once both have, the server sends both scores to
+both, so they can't disagree on who won. If either player leaves or drops, the room closes and the
+other is told.
+
+There is no pause online: both games run at the same time. The Pause button becomes Leave, and
+P, Esc or Enter (or a gamepad's Start) only ask whether to leave while the game goes on underneath.
+Losing focus doesn't pause either. A background tab gets no animation frames, so there the game runs
+on a small Web Worker clock (`src/ticker.ts`) 20 times a second: browsers slow a page's own timers to
+about once a second in a background tab, which would make that field jump along for the other
+player, but not a worker's. The page's own timer stays as a fallback. Time the page missed altogether (a phone app suspended, the main thread stalled) is made up by
+fast-forwarding, up to 30 steps a frame with the player's controls off, so a field never falls
+behind the other player's. While catching up the page sends at most about 20 states a second, each
+covering more play time.
+
+The WebSocket code (`server/ws.ts`) is written out by hand on `node:http`'s `upgrade` event, so the
+server still has no npm dependencies. Limits: a connection must create or join within 10 s; rooms
+nobody joins close after 30 minutes; 1000 rooms at once; 30 creates or joins per address per 10
+minutes (so codes can't be guessed by brute force); 100 messages a second and 32 kB a message per
+connection. Browsers must come from the same host (the `Origin` header is checked). Rooms live in
+memory, so a deploy ends the games in progress.
+
+As with the leaderboard, each browser reports its own score, so a modified client could lie. That
+is fine between friends, and it's why there is no Versus leaderboard.
+
+Every round the server starts goes in a `match` table when it ends, for play statistics: a random id
+for the room (codes are reused, so they can't group rounds), the round number in that room (2 and up
+are rematches), both browsers' player ids (sent with create and join; the host created the room, the
+guest joined), both final scores, the winner, how it ended (`finished` once both topped out,
+`host-left` or `guest-left` when someone left or dropped first, with the score of anyone who had
+already topped out, or `restart` when the server stopped) and how long the round took by the
+server's clock. A room nobody joined, and leaving after a finished round, log nothing. See
+`matches` and `stats` in the admin commands above.
 
 ## Deployment
 
@@ -127,7 +178,9 @@ Point the webhook receiver's slicefall hook at `/opt/docker/slicefall/deploy.sh`
 Everything the app keeps is in `/opt/docker/slicefall/data` (`/data` in the container).
 
 **Nginx Proxy Manager:** add a proxy host for your domain → scheme `http`, host `slicefall`, port
-`5034`, with a Let's Encrypt certificate and "Force SSL".
+`5034`, with **Websockets Support** on (Online mode needs it), a Let's Encrypt certificate and
+"Force SSL". The server checks that a WebSocket's `Origin` matches the `Host` header, which Nginx
+Proxy Manager passes through unchanged by default.
 
 ### Manual deploy and rollback
 
@@ -179,8 +232,11 @@ The itch page's cover, screenshots and gameplay GIF are in `itch/screenshots/`.
 | ------ | -------- | ----- |
 | Cut    | Game A   | Endless. A row is cut out when it holds 8.1 blocks' worth of area. Score = `ceil((n·3)^(avg^10)·20 + n²·40)` for `n` rows at average density `avg`. Level up every 10 rows (+7 px/s fall speed). |
 | Versus | 2P       | Two Cut fields side by side, same piece sequence (mirrored for player 1). Both play until they top out; higher score wins. |
+| Online | —        | Versus against a player on another device, joined by a code. Each player's own field is full size; the other player's is drawn small beside it. Same pieces for both, not mirrored. |
 
 ## Controls
+
+Online mode uses the 1-player keys, gamepad and touch controls.
 
 | Action        | 1 player              | Versus P1 | Versus P2           |
 | ------------- | --------------------- | --------- | ------------------- |
@@ -189,7 +245,7 @@ The itch page's cover, screenshots and gameplay GIF are in `itch/screenshots/`.
 | Rotate left   | Z or J                | Q         | U or ,              |
 | Rotate right  | X or K                | E         | O or .              |
 
-Hotkeys (all modes):
+Hotkeys (all modes; Online has no pause, so there P / Esc / Enter ask whether to leave):
 
 | Key              | Does |
 | ---------------- | ---- |
@@ -215,11 +271,14 @@ with a pattern per piece kind, brick walls round the well, square panels and mon
 | `src/field.ts`     | `gameA.lua`, `gameB.lua`, `gameBmulti.lua` | One playfield: planck.js world, walls, spawning, controls, landing detection, row density, cutting, scoring, levels, fall-out on game over. |
 | `src/geometry.ts`  | `refineshape`, `shrinkpolygon`, `largeenough`, `settetrimass` | Polygon clipping, area, Box2D-style mass properties, sliver rejection. |
 | `src/pieces.ts`    | `newtetrishapes` | Piece layouts (four 32 px squares each). |
-| `src/games.ts`     | — | Single-player and Versus game flow plus the HUD. |
+| `src/games.ts`     | — | Single-player, Versus and Online game flow plus the HUD. |
+| `src/online.ts`    | — | Online: turns a field into state messages, and draws the other player's field from them. |
+| `src/net.ts`       | — | Online: the WebSocket to the server's rooms, and room codes. |
+| `src/ticker.ts`    | — | Online: a Web Worker clock that keeps the game going in a background tab. |
 | `src/demo.ts`      | — | Self-playing field behind the title screen. |
 | `src/audio.ts`     | — | Synthesised sound effects and two original music loops (WebAudio). |
 | `src/api.ts`       | — | Calls the leaderboard API. |
-| `server/`          | — | Node server: static files, leaderboard API, SQLite (`db.ts`), score checks (`scores.ts`), admin script. Runs as TypeScript directly, since Node strips the types. |
+| `server/`          | — | Node server: static files, leaderboard API, SQLite (`db.ts`), score checks (`scores.ts`), online rooms (`match.ts`) over a small WebSocket implementation (`ws.ts`), admin script. Runs as TypeScript directly, since Node strips the types. |
 
 Physics uses [planck.js](https://github.com/piqnt/planck.js), a JavaScript rewrite of Box2D,
 the same engine LÖVE wraps. The simulation runs at a fixed 60 Hz step so it behaves the same

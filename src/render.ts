@@ -1,5 +1,5 @@
 import * as C from './config';
-import type { Field, PieceView } from './field';
+import type { PieceView } from './field';
 import { type Poly, shrinkPolygon } from './geometry';
 import { PIECE_CENTRES, PIECE_SHAPES } from './pieces';
 import type { ThemeName } from './storage';
@@ -313,16 +313,29 @@ export function drawBackground(ctx: CanvasRenderingContext2D, w: number, h: numb
   ctx.fillRect(0, 0, w, h);
 }
 
+/** What drawField needs: a Field, or the other player's field in an online game (RemoteField). */
+export interface DrawableField {
+  readonly left: number;
+  readonly width: number;
+  /** What the field looked like right before the cut, drawn while the rows blink */
+  readonly snapshot: PieceView[];
+  readonly removedRows: boolean[];
+  views(alpha?: number): PieceView[];
+  isCutting(): boolean;
+  rowsLit(): boolean;
+  rowFullness(r: number): number;
+}
+
 interface FieldDrawOpts {
   hidePieces?: boolean;
   dim?: number;
-  /** Which side of the well the row meter goes on (default left) */
-  meter?: 'left' | 'right';
+  /** Which side of the well the row meter goes on (default left), or none */
+  meter?: 'left' | 'right' | 'none';
   /** How far this frame is between the last two physics steps, 0–1 (see Field.views) */
   alpha?: number;
 }
 
-export function drawField(ctx: CanvasRenderingContext2D, field: Field, at: FieldLayout, opts: FieldDrawOpts = {}) {
+export function drawField(ctx: CanvasRenderingContext2D, field: DrawableField, at: FieldLayout, opts: FieldDrawOpts = {}) {
   const w = field.width;
   const h = C.FIELD_HEIGHT;
 
@@ -367,11 +380,11 @@ export function drawField(ctx: CanvasRenderingContext2D, field: Field, at: Field
     ctx.fillRect(at.x, at.y, w, h);
   }
 
-  drawRowMeter(ctx, field, at, opts.meter ?? 'left');
+  if (opts.meter !== 'none') drawRowMeter(ctx, field, at, opts.meter ?? 'left');
 }
 
 /** Per-row fill gauge beside the well: how close each row is to being cut. */
-function drawRowMeter(ctx: CanvasRenderingContext2D, field: Field, at: FieldLayout, side: 'left' | 'right') {
+function drawRowMeter(ctx: CanvasRenderingContext2D, field: DrawableField, at: FieldLayout, side: 'left' | 'right') {
   // 8 px clear of the frame or wall; in pixel art every edge lands on the pixel grid
   const art = theme.pixel;
   const mw = 12;

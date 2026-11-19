@@ -38,6 +38,8 @@ export type FieldEvent = 'land' | 'clear' | 'clear4' | 'levelup' | 'topout' | 'f
 export type FieldState = 'idle' | 'playing' | 'cutting' | 'toppedOut' | 'failing' | 'over';
 
 export interface Piece {
+  /** Unique within the field; online games use it to tell the other player which body moved. */
+  id: number;
   body: Body;
   /** Polygons in body-local physics pixels (unshrunk; used for drawing, area and cutting). */
   shapes: Poly[];
@@ -107,6 +109,7 @@ export class Field {
   private failTime = 0;
   private pickKind: () => number;
   private emit: (e: FieldEvent) => void;
+  private nextId = 1;
 
   constructor(opts: FieldOptions) {
     this.pickKind = opts.pickKind;
@@ -164,7 +167,7 @@ export class Field {
       linearDamping: C.LINEAR_DAMPING,
       bullet: true,
     });
-    const piece: Piece = { body, shapes, kind, prevX: x, prevY: y, prevAngle: angle };
+    const piece: Piece = { id: this.nextId++, body, shapes, kind, prevX: x, prevY: y, prevAngle: angle };
     for (const s of shapes) this.addFixture(body, s, { piece });
     this.setMass(piece);
     return piece;

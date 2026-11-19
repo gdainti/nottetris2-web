@@ -1,5 +1,5 @@
-export type GameMode = 'cut' | 'versus';
-const GAME_MODES: GameMode[] = ['cut', 'versus'];
+export type GameMode = 'cut' | 'versus' | 'online';
+const GAME_MODES: GameMode[] = ['cut', 'versus', 'online'];
 export type ThemeName = 'modern' | 'retro';
 
 export interface Settings {

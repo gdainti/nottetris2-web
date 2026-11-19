@@ -91,7 +91,53 @@ const MIGRATIONS = [
      PRIMARY KEY (player, name)
    ) WITHOUT ROWID;
    CREATE INDEX player_name_by_name ON player_name (name);`,
+
+  // Online Versus: one row per round the server started, written when it ends. The host created
+  // the room, the guest joined it; their ids are the browsers' player ids (NULL if not sent).
+  // Scores are NULL for a player who hadn't topped out when the round ended early.
+  `CREATE TABLE match (
+     id          INTEGER PRIMARY KEY,
+     room        TEXT    NOT NULL, -- random id of the room (its code is reused once it closes)
+     round       INTEGER NOT NULL, -- 1, then 2 for the first rematch, ...
+     host        TEXT,
+     guest       TEXT,
+     host_score  INTEGER,
+     guest_score INTEGER,
+     winner      TEXT    CHECK (winner IN ('host', 'guest', 'draw')),
+     ended       TEXT    NOT NULL CHECK (ended IN ('finished', 'host-left', 'guest-left', 'restart')),
+     duration_ms INTEGER NOT NULL, -- from the round's start to its end, by the server's clock
+     created_at  INTEGER NOT NULL  -- unix ms, when it ended
+   );
+   CREATE INDEX match_by_time  ON match (created_at);
+   CREATE INDEX match_by_host  ON match (host);
+   CREATE INDEX match_by_guest ON match (guest);`,
 ];
+
+/** One online Versus round, as server/match.ts reports it. */
+export interface MatchRecord {
+  room: string;
+  round: number;
+  host: string | null;
+  guest: string | null;
+  hostScore: number | null;
+  guestScore: number | null;
+  /** finished: both topped out; host-left / guest-left: who left (or dropped) first; restart: the server stopped */
+  ended: 'finished' | 'host-left' | 'guest-left' | 'restart';
+  durationMs: number;
+}
+
+export interface MatchTotals {
+  rounds: number;
+  finished: number;
+  /** Rounds that ended because a player left */
+  left: number;
+  rooms: number;
+  /** Rounds after the first in their room */
+  rematches: number;
+  /** Different player ids among hosts and guests */
+  devices: number;
+  playMs: number;
+}
 
 export interface GameTotals {
   games: number;
@@ -204,6 +250,61 @@ export class ScoreDb {
       )
       .run(g.mode, g.player ?? null, g.score, g.lines, g.level, g.pieces, g.cuts, g.bestCut, g.durationMs, at.getTime());
     return Number(r.lastInsertRowid);
+  }
+
+  /** Logs an online Versus round. The winner follows from the scores of a finished round. */
+  addMatch(m: MatchRecord, at: Date): number {
+    const winner =
+      m.ended !== 'finished' || m.hostScore === null || m.guestScore === null
+        ? null
+        : m.hostScore > m.guestScore
+          ? 'host'
+          : m.guestScore > m.hostScore
+            ? 'guest'
+            : 'draw';
+    const r = this.sql
+      .prepare(
+        `INSERT INTO match (room, round, host, guest, host_score, guest_score, winner, ended, duration_ms, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(m.room, m.round, m.host, m.guest, m.hostScore, m.guestScore, winner, m.ended, m.durationMs, at.getTime());
+    return Number(r.lastInsertRowid);
+  }
+
+  /** Totals over the online rounds since `since` (or ever). */
+  matchTotals(since: Date | null): MatchTotals {
+    return this.sql
+      .prepare(
+        `SELECT COUNT(*) AS rounds, COUNT(*) FILTER (WHERE ended = 'finished') AS finished,
+                COUNT(*) FILTER (WHERE ended <> 'finished') AS "left", COUNT(DISTINCT room) AS rooms,
+                COUNT(*) FILTER (WHERE round > 1) AS rematches,
+                (SELECT COUNT(*) FROM (SELECT host AS p FROM match WHERE created_at >= ?1 AND host IS NOT NULL
+                                       UNION SELECT guest FROM match WHERE created_at >= ?1 AND guest IS NOT NULL)) AS devices,
+                COALESCE(SUM(duration_ms), 0) AS playMs
+         FROM match WHERE created_at >= ?1`,
+      )
+      .get(since?.getTime() ?? 0) as unknown as MatchTotals;
+  }
+
+  /** The latest online rounds, newest first (for the admin script). */
+  recentMatches(limit: number) {
+    return this.sql
+      .prepare(
+        `SELECT id, room, round, host, guest, host_score, guest_score, winner, ended, duration_ms, created_at
+         FROM match ORDER BY id DESC LIMIT ?`,
+      )
+      .all(limit);
+  }
+
+  /** Online rounds of the player ids starting with `prefix`, as host or guest, newest first. */
+  matchesByPlayer(prefix: string) {
+    return this.sql
+      .prepare(
+        `SELECT id, room, round, host, guest, host_score, guest_score, winner, ended, duration_ms, created_at
+         FROM match WHERE (host >= ?1 AND host < ?2) OR (guest >= ?1 AND guest < ?2)
+         ORDER BY created_at DESC, id DESC`,
+      )
+      .all(prefix, `${prefix}g`);
   }
 
   /** Totals over the game log since `since` (or ever). */

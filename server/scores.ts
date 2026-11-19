@@ -34,7 +34,7 @@ export interface GameRecord extends GameStats {
 }
 
 /** A player id: 32 lowercase hex digits (128 random bits). */
-const PLAYER_ID = /^[0-9a-f]{32}$/;
+export const PLAYER_ID = /^[0-9a-f]{32}$/;
 
 const badPlayer = (player: unknown) => player !== undefined && (typeof player !== 'string' || !PLAYER_ID.test(player));
 const PLAYER_ERROR = 'player must be 32 lowercase hex digits';

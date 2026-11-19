@@ -38,3 +38,18 @@ export const MIRROR = [0, 2, 1, 3, 6, 5, 4];
 export function randomKind(): number {
   return Math.floor(Math.random() * 7);
 }
+
+/**
+ * A piece sequence that comes out the same from the same seed in every browser (mulberry32: only
+ * 32-bit integer maths), so both players of an online game get the same pieces.
+ */
+export function seededKinds(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * 7);
+  };
+}
