@@ -57,7 +57,7 @@ random player id that the browser makes once and keeps in `localStorage`, so one
 can be followed whether or not they give a name (and `stats` counts the different ids as
 `devices`). It is 32 random hex digits and says nothing about who plays; clearing site data makes a
 new one. Submitted scores carry the id too, and a `player_name` table keeps each id and name pair
-(not the shared `ANON`) with how many scores and when it was first and last used, so one person's
+(not the shared `INCOGNITO`) with how many scores and when it was first and last used, so one person's
 names and devices can be found from either side. Logging allows 60 games per IP per 10 minutes. To see how much the game is played:
 
 ```sh

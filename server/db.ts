@@ -111,6 +111,12 @@ const MIGRATIONS = [
    CREATE INDEX match_by_time  ON match (created_at);
    CREATE INDEX match_by_host  ON match (host);
    CREATE INDEX match_by_guest ON match (guest);`,
+
+  // The shared name for scores sent without one was ANON and is INCOGNITO now (scores.ts). Older
+  // rows follow it, so anonymous play keeps a single board row. Nobody could submit ANON as a name
+  // of their own, so every ANON row was anonymous.
+  `UPDATE score SET name = 'INCOGNITO' WHERE name = 'ANON';
+   UPDATE game  SET name = 'INCOGNITO' WHERE name = 'ANON';`,
 ];
 
 /** One online Versus round, as server/match.ts reports it. */

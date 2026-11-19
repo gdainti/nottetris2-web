@@ -184,7 +184,7 @@ describe('game log', () => {
     db.close();
   });
 
-  test('a score ties its name to the player id; ANON does not', () => {
+  test('a score ties its name to the player id; INCOGNITO does not', () => {
     const db = new ScoreDb(':memory:');
     const ann = 'aaaa0000000000000000000000000000';
     const phone = 'cccc0000000000000000000000000000';
@@ -193,7 +193,7 @@ describe('game log', () => {
     db.add(cut({ name: 'ANN', player: ann, score: 700 }), t(5));
     db.add(cut({ name: 'ANNIE', player: ann }), t(10));
     db.add(cut({ name: 'ANN', player: phone }), t(20));
-    db.add(cut({ name: 'ANON', player: ann }), t(30));
+    db.add(cut({ name: 'INCOGNITO', player: ann }), t(30));
     db.add(cut({ name: 'ANN' }), t(40)); // an older client: no id, no pair
 
     const pairs = (rows: Record<string, unknown>[]) => rows.map((r) => [r.player, r.name, r.scores, r.first_at, r.last_at]);
@@ -205,8 +205,8 @@ describe('game log', () => {
       db.playersOf('ANN').map((r) => r.player),
       [phone, ann],
     );
-    assert.deepEqual(db.playersOf('ANON'), []);
-    assert.equal(db.sql.prepare('SELECT COUNT(*) AS n FROM score WHERE player = ?').get(ann)!.n, 4); // ANON's score keeps the id
+    assert.deepEqual(db.playersOf('INCOGNITO'), []);
+    assert.equal(db.sql.prepare('SELECT COUNT(*) AS n FROM score WHERE player = ?').get(ann)!.n, 4); // INCOGNITO's score keeps the id
 
     db.removeName('ANN');
     assert.deepEqual(db.playersOf('ANN'), []);
@@ -361,6 +361,37 @@ test('migrating an old database drops Stack scores and keeps Cut ones', () => {
       );
       assert.equal(db.add(cut({ name: 'EVE' }), new Date(5)), 4); // ids carry on
       assert.equal(db.gameTotals(null).games, 0); // the game log starts empty
+    } finally {
+      db.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('migrating renames the old shared ANON scores and games to INCOGNITO', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nt2-migrate-'));
+  try {
+    const file = join(dir, 'scores.db');
+    // A database from before the rename, at user_version 5
+    const old = new ScoreDb(file);
+    old.add(cut({ name: 'ANN' }), new Date(1));
+    old.add(cut({ name: 'ANON' }), new Date(2));
+    old.sql.exec(`INSERT INTO game (mode, name, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at)
+                  VALUES ('cut', 'ANON', 500, 4, 0, 12, 2, 2, 60000, 2), ('cut', NULL, 100, 1, 0, 4, 1, 1, 9000, 3);
+                  PRAGMA user_version = 5;`);
+    old.close();
+
+    const db = new ScoreDb(file);
+    try {
+      assert.deepEqual(
+        db.recent(10).map((r) => r.name),
+        ['INCOGNITO', 'ANN'],
+      );
+      assert.deepEqual(
+        db.sql.prepare('SELECT name FROM game ORDER BY created_at').all().map((r) => r.name),
+        ['INCOGNITO', null],
+      );
     } finally {
       db.close();
     }
