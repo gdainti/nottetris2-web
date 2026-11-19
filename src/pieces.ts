@@ -3,6 +3,9 @@ import type { Poly } from './geometry';
 
 export const PIECE_NAMES = ['I', 'J', 'L', 'O', 'S', 'T', 'Z'] as const;
 
+/** Kind of the T piece (the one that can T-spin, see Field.checkTSpin) */
+export const T = 5;
+
 // Centres of the four blocks of each piece, relative to the body origin (from newtetrishapes()).
 const BLOCK_CENTRES: [number, number][][] = [
   [[-48, 0], [-16, 0], [16, 0], [48, 0]], // I

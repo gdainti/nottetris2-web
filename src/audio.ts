@@ -14,6 +14,7 @@ export type Sfx =
   | 'beep'
   | 'go'
   | 'highscore'
+  | 'tspin'
   // Versus attacks: blocks coming, blocks dropping, blocks cancelled by a cut
   | 'warn'
   | 'drop'
@@ -211,6 +212,9 @@ export class AudioEngine {
       case 'drop':
         this.noise(out, t, 0.14, 0.45, 600);
         this.tone(out, 120, t, 0.2, 'sine', 0.5, 40);
+        break;
+      case 'tspin':
+        arp([79, 86, 91], 0.04, 0.1, 'triangle', 0.22);
         break;
       case 'counter':
         arp([84, 91, 96], 0.045, 0.12, 'triangle', 0.24);

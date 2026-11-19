@@ -18,6 +18,8 @@ const cut = (over: Partial<Submission> = {}): Submission => ({
   level: 0,
   pieces: 12,
   durationMs: 60_000,
+  tSpins: 0,
+  tSpinPoints: 0,
   ...over,
 });
 
@@ -30,6 +32,8 @@ const played = (over: Partial<GameRecord> = {}): GameRecord => ({
   cuts: 2,
   bestCut: 3,
   durationMs: 60_000,
+  tSpins: 0,
+  tSpinPoints: 0,
   ...over,
 });
 
@@ -68,6 +72,11 @@ describe('validate', () => {
       ['not an object', 'hello'],
     ];
     for (const [why, body] of cases) assert.equal(validate(body).ok, false, why);
+  });
+
+  test('takes a score of T-spins alone', () => {
+    assert.ok(validate(cut({ score: 111, lines: 0, pieces: 3, tSpins: 3, tSpinPoints: 111 })).ok);
+    assert.equal(validate(cut({ score: 111, lines: 0, pieces: 3 })).ok, false);
   });
 });
 
@@ -113,6 +122,28 @@ describe('validateGame', () => {
       ['missing cuts', { ...played(), cuts: undefined }],
       ['mode', { ...played(), mode: 'versus' }],
       ['not an object', 42],
+    ];
+    for (const [why, body] of cases) assert.equal(validateGame(body).ok, false, why);
+  });
+
+  test('counts T-spin points on top of the cut points', () => {
+    const spun = (over: Partial<GameRecord>) => validateGame(played(over));
+    // 1 + 10 + 100 from one T, 1 from another: 112 points on top of the cuts' 500
+    const ok = spun({ score: 612, tSpins: 4, tSpinPoints: 112 });
+    assert.ok(ok.ok && ok.value.tSpins === 4 && ok.value.tSpinPoints === 112);
+    // Only T-spins: points without rows
+    assert.ok(spun({ score: 11, lines: 0, cuts: 0, bestCut: 0, tSpins: 2, tSpinPoints: 11 }).ok);
+    // Older clients send neither: 0
+    const old = validateGame({ ...played(), tSpins: undefined, tSpinPoints: undefined });
+    assert.ok(old.ok && old.value.tSpins === 0 && old.value.tSpinPoints === 0);
+
+    const cases: [string, unknown][] = [
+      ['points without T-spins', played({ score: 501, tSpinPoints: 1 })],
+      ['over 100 points a T-spin', played({ score: 701, tSpins: 2, tSpinPoints: 201 })],
+      ['T-spin points over the score', played({ score: 10, lines: 0, cuts: 0, bestCut: 0, tSpins: 1, tSpinPoints: 11 })],
+      ['T-spin points that leave rows without points', played({ score: 111, tSpins: 3, tSpinPoints: 111 })],
+      ['too many T-spins for the time', played({ score: 600, tSpins: 61, tSpinPoints: 100, durationMs: 60_000 })],
+      ['fractional T-spins', played({ tSpins: 1.5 })],
     ];
     for (const [why, body] of cases) assert.equal(validateGame(body).ok, false, why);
   });
@@ -379,6 +410,8 @@ test('migrating renames the old shared ANON scores and games to INCOGNITO', () =
     old.add(cut({ name: 'ANON' }), new Date(2));
     old.sql.exec(`INSERT INTO game (mode, name, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at)
                   VALUES ('cut', 'ANON', 500, 4, 0, 12, 2, 2, 60000, 2), ('cut', NULL, 100, 1, 0, 4, 1, 1, 9000, 3);
+                  ALTER TABLE game DROP COLUMN t_spins;
+                  ALTER TABLE game DROP COLUMN t_spin_points;
                   PRAGMA user_version = 5;`);
     old.close();
 
@@ -391,6 +424,14 @@ test('migrating renames the old shared ANON scores and games to INCOGNITO', () =
       assert.deepEqual(
         db.sql.prepare('SELECT name FROM game ORDER BY created_at').all().map((r) => r.name),
         ['INCOGNITO', null],
+      );
+      // Games from before T-spins have none
+      assert.deepEqual(
+        db.sql.prepare('SELECT t_spins, t_spin_points FROM game').all().map((r) => [r.t_spins, r.t_spin_points]),
+        [
+          [0, 0],
+          [0, 0],
+        ],
       );
     } finally {
       db.close();

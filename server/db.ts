@@ -117,6 +117,10 @@ const MIGRATIONS = [
   // of their own, so every ANON row was anonymous.
   `UPDATE score SET name = 'INCOGNITO' WHERE name = 'ANON';
    UPDATE game  SET name = 'INCOGNITO' WHERE name = 'ANON';`,
+
+  // T-spins: full turns of a falling T, and the points they paid (part of score). 0 for older games.
+  `ALTER TABLE game ADD COLUMN t_spins INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE game ADD COLUMN t_spin_points INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 /** One online Versus round, as server/match.ts reports it. */
@@ -251,10 +255,10 @@ export class ScoreDb {
   addGame(g: GameRecord, at: Date): number {
     const r = this.sql
       .prepare(
-        `INSERT INTO game (mode, player, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO game (mode, player, score, lines, level, pieces, cuts, best_cut, t_spins, t_spin_points, duration_ms, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(g.mode, g.player ?? null, g.score, g.lines, g.level, g.pieces, g.cuts, g.bestCut, g.durationMs, at.getTime());
+      .run(g.mode, g.player ?? null, g.score, g.lines, g.level, g.pieces, g.cuts, g.bestCut, g.tSpins, g.tSpinPoints, g.durationMs, at.getTime());
     return Number(r.lastInsertRowid);
   }
 
@@ -342,7 +346,7 @@ export class ScoreDb {
   recentGames(limit: number) {
     return this.sql
       .prepare(
-        `SELECT id, mode, player, name, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at
+        `SELECT id, mode, player, name, score, lines, level, pieces, cuts, best_cut, t_spins, t_spin_points, duration_ms, created_at
          FROM game ORDER BY id DESC LIMIT ?`,
       )
       .all(limit);
@@ -352,7 +356,7 @@ export class ScoreDb {
   gamesByPlayer(prefix: string) {
     return this.sql
       .prepare(
-        `SELECT id, mode, player, name, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at
+        `SELECT id, mode, player, name, score, lines, level, pieces, cuts, best_cut, t_spins, t_spin_points, duration_ms, created_at
          FROM game WHERE player >= ? AND player < ? ORDER BY created_at DESC, id DESC`,
       )
       .all(prefix, `${prefix}g`);
