@@ -1,4 +1,4 @@
-// Entry point: serves the built game and the leaderboard API from one process.
+// Entry point: serves the built game, the leaderboard API and the online Versus rooms from one process.
 //
 //   DATABASE_URL    SQLite file (default data/slicefall.db; /data/slicefall.db in Docker)
 //   PORT            default 5034
@@ -32,5 +32,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.exit(0);
     });
     server.closeAllConnections();
+    // Upgraded sockets (online games) aren't HTTP connections any more, and close() waits for them.
+    server.closeMatches();
   });
 }

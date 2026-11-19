@@ -2,8 +2,11 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, relative } from 'node:path';
 import { gzipSync } from 'node:zlib';
+import type { Duplex } from 'node:stream';
 import type { ScoreDb } from './db.ts';
+import { type MatchOptions, Matches } from './match.ts';
 import { MODES, type Mode, validate, validateGame, weekStart } from './scores.ts';
+import { acceptUpgrade, refuseUpgrade } from './ws.ts';
 
 export interface AppOptions {
   db: ScoreDb;
@@ -15,11 +18,20 @@ export interface AppOptions {
   rateLimit?: { max: number; windowMs: number };
   /** Game-log records allowed per IP per window. */
   gameRateLimit?: { max: number; windowMs: number };
+  /** Online rooms created or joined per IP per window. */
+  matchRateLimit?: { max: number; windowMs: number };
+  match?: MatchOptions;
   now?: () => Date;
 }
 
+/** The HTTP server, plus a way to end the online games' WebSockets, which server.close() waits for. */
+export type AppServer = Server & { closeMatches(): void; readonly matches: Matches };
+
 const BOARD_SIZE = 10;
 const MAX_BODY = 2048;
+/** A field's state message is a few hundred bytes; one with every piece's shape is a few kB. */
+const MAX_MESSAGE = 32 * 1024;
+const PING_MS = 25_000;
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -37,11 +49,18 @@ const TYPES: Record<string, string> = {
 // itch/index.html's iframe of this site. frame-ancestors is checked against every one of them.
 const FRAME_ANCESTORS = 'https://itch.io https://*.itch.io https://*.itch.zone';
 
-const SECURITY_HEADERS = {
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
-  'Content-Security-Policy': `default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors ${FRAME_ANCESTORS}`,
-};
+/**
+ * The online games' WebSocket goes back to the same host. CSP 3 counts that as 'self', but older
+ * Safari did not, so the host is named too. A Host header that isn't a plain host name is left out.
+ */
+function securityHeaders(host: string | undefined): Record<string, string> {
+  const socket = host && /^[a-z0-9.-]+(:\d+)?$/i.test(host) ? ` wss://${host} ws://${host}` : '';
+  return {
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'Content-Security-Policy': `default-src 'self'; connect-src 'self'${socket}; img-src 'self' data:; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors ${FRAME_ANCESTORS}`,
+  };
+}
 
 interface StaticFile {
   body: Buffer;
@@ -78,7 +97,7 @@ function loadStatic(dir: string): Map<string, StaticFile> {
 }
 
 function send(res: ServerResponse, status: number, body: string | Buffer, headers: Record<string, string> = {}) {
-  res.writeHead(status, { ...SECURITY_HEADERS, 'Content-Length': String(Buffer.byteLength(body)), ...headers });
+  res.writeHead(status, { ...securityHeaders(res.req.headers.host), 'Content-Length': String(Buffer.byteLength(body)), ...headers });
   res.end(res.req.method === 'HEAD' ? undefined : body);
 }
 
@@ -142,13 +161,37 @@ function rateLimiter(max: number, windowMs: number) {
   };
 }
 
-export function createApp(opts: AppOptions): Server {
+/**
+ * Browsers always send Origin with a WebSocket; it must be this site, so other pages can't use the
+ * rooms. Clients that aren't browsers send none and can claim anything anyway.
+ */
+function sameOrigin(req: IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
+
+export function createApp(opts: AppOptions): AppServer {
   const { db, addressHeader } = opts;
   const now = opts.now ?? (() => new Date());
   const files = opts.staticDir ? loadStatic(opts.staticDir) : new Map<string, StaticFile>();
   const limit = rateLimiter(opts.rateLimit?.max ?? 30, opts.rateLimit?.windowMs ?? 10 * 60_000);
   // Every finished game is logged, and a game can end within seconds, so this one is looser.
   const gameLimit = rateLimiter(opts.gameRateLimit?.max ?? 60, opts.gameRateLimit?.windowMs ?? 10 * 60_000);
+  // Each create or join counts; a rematch stays in its room and doesn't.
+  const matchLimit = rateLimiter(opts.matchRateLimit?.max ?? 30, opts.matchRateLimit?.windowMs ?? 10 * 60_000);
+  const matches = new Matches({
+    ...opts.match,
+    onRound: (r) => {
+      db.addMatch(r, now());
+      console.log(`[match] round ${r.round} ${r.ended} ${r.hostScore ?? '-'}:${r.guestScore ?? '-'}`);
+    },
+    now: () => now().getTime(),
+  });
 
   const clientIp = (req: IncomingMessage): string => {
     const forwarded = addressHeader ? req.headers[addressHeader.toLowerCase()] : undefined;
@@ -245,11 +288,27 @@ export function createApp(opts: AppOptions): Server {
     });
   }
 
-  return createServer((req, res) => {
+  const server = createServer((req, res) => {
     handle(req, res).catch((e: unknown) => {
       console.error(e);
       if (!res.headersSent) json(res, 500, { error: 'server error' });
       else res.destroy();
     });
   });
+
+  server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    socket.on('error', () => socket.destroy());
+    const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+    if (path !== '/api/match') return refuseUpgrade(socket, 404, 'Not Found');
+    if (!sameOrigin(req)) {
+      console.warn(`[match] refused origin ${req.headers.origin} on host ${req.headers.host}`);
+      return refuseUpgrade(socket, 403, 'Forbidden');
+    }
+    const conn = acceptUpgrade(req, socket, head, { maxMessage: MAX_MESSAGE, pingMs: PING_MS });
+    if (!conn) return;
+    const ip = rateKey(clientIp(req));
+    matches.add(conn, () => matchLimit(ip, now().getTime()));
+  });
+
+  return Object.assign(server, { closeMatches: () => matches.closeAll(), matches });
 }

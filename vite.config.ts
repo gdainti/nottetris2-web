@@ -7,7 +7,8 @@ export default defineConfig({
   // The package version, shown small in the bottom-right corner of the screen.
   define: { __APP_VERSION__: JSON.stringify(version) },
   server: {
-    // `npm run server` in a second terminal answers the leaderboard API during development.
-    proxy: { '/api': `http://localhost:${process.env.PORT || 5034}` },
+    // `npm run server` in a second terminal answers the leaderboard API and the online rooms
+    // (a WebSocket, hence ws) during development.
+    proxy: { '/api': { target: `http://localhost:${process.env.PORT || 5034}`, ws: true } },
   },
 });

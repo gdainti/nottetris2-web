@@ -2,7 +2,8 @@ import { audio } from './audio';
 import * as C from './config';
 import { Field, type FieldEvent, NO_CONTROLS } from './field';
 import { singleControls, versusControls } from './input';
-import { MIRROR, randomKind } from './pieces';
+import { FieldEncoder, RemoteField, SEND_INTERVAL, type StateMsg } from './online';
+import { MIRROR, randomKind, seededKinds } from './pieces';
 import { COLORS, FONT, card, drawBackground, drawField, drawPreview, label, value } from './render';
 import { highScores } from './storage';
 
@@ -261,6 +262,184 @@ export class VersusGame {
     ['P1  A D S  ·  Q E rotate', 'P2  J L K  ·  U O rotate', '(P2 also ← → ↓  ·  , .)'].forEach((h, i) =>
       ctx.fillText(h, cx, 572 + i * 16),
     );
+  }
+}
+
+type OnlinePhase = 'countdown' | 'playing' | 'waiting' | 'ending' | 'fallout' | 'done';
+
+/**
+ * Versus against a player on another device. Only this player's field runs here; the other one is
+ * drawn from the state messages their browser sends (RemoteField), small, in the side panel. Both
+ * fields get the same pieces from the room's seed. The server sends the result once both topped out.
+ *
+ * Both games run at the same time: there is no pause. The page keeps the game going while it's in
+ * the background and makes up any time it missed (main.ts), with `inputOff` set meanwhile.
+ */
+export class OnlineGame {
+  readonly type = 'online';
+  readonly field: Field;
+  readonly remote = new RemoteField();
+  /** Where the HTML button sits; online it's Leave rather than Pause */
+  readonly pauseRect: Rect = { x: 410, y: 32, w: 186, h: 38 };
+  phase: OnlinePhase = 'countdown';
+  /** Only set once the room is gone, to stop the field where it is */
+  paused = false;
+  /** Ignore this player's controls: a menu is open over the game, or it is catching up on missed time */
+  inputOff = false;
+  result: { you: number; them: number } | null = null;
+  private countdown = 3;
+  private lastBeep = 4;
+  private endTimer = 0;
+  /** Seconds of play, sent with each state so the other side can space them out */
+  private time = 0;
+  private encoder = new FieldEncoder();
+  /** Play time and page time (ms) of the last state sent, and whether the final one has gone */
+  private sentTime = -1;
+  private sentAt = -Infinity;
+  private sentLast = false;
+
+  /** Mini well of the other player: scale and top-left corner */
+  private static readonly MINI = 0.46;
+  private static readonly MINI_AT = { x: 503 - (328 * 0.46) / 2, y: 270 };
+
+  constructor(
+    seed: number,
+    /** Rounds won in this room, [this player, the other]; updated when a round ends */
+    readonly wins: [number, number],
+    private send: (msg: object) => void,
+    private onStart: () => void,
+    private onDone: () => void,
+  ) {
+    this.field = new Field({ pickKind: seededKinds(seed), emit: (e) => this.onEvent(e) });
+  }
+
+  get width() {
+    return SINGLE_W;
+  }
+
+  start() {
+    /* countdown runs in update() */
+  }
+
+  receive(msg: StateMsg) {
+    this.remote.receive(msg);
+  }
+
+  /** Both players have topped out: the final scores, from the server. */
+  finish(you: number, them: number) {
+    if (this.result) return;
+    this.result = { you, them };
+    if (you > them) this.wins[0]++;
+    else if (them > you) this.wins[1]++;
+    this.phase = 'ending';
+    this.endTimer = 0;
+    audio.stopMusic();
+    audio.play('topout');
+  }
+
+  private onEvent(e: FieldEvent) {
+    if (e === 'topout') {
+      audio.play('back');
+      this.phase = 'waiting';
+      this.send({ t: 'over', score: this.field.score });
+    } else if (e === 'fallout') audio.play('fallout');
+    else eventSound(e);
+  }
+
+  update(dt: number) {
+    this.remote.update(dt);
+    if (this.paused) return;
+
+    if (this.phase === 'countdown') {
+      this.countdown -= dt;
+      const n = Math.ceil(this.countdown);
+      if (n < this.lastBeep && n > 0) audio.play('beep');
+      this.lastBeep = n;
+      if (this.countdown <= 0) {
+        this.phase = 'playing';
+        audio.play('go');
+        this.field.start();
+        this.onStart();
+      }
+      return;
+    }
+
+    this.time += dt;
+    this.field.update(dt, this.phase === 'playing' && !this.inputOff ? singleControls() : NO_CONTROLS);
+
+    if (this.phase === 'ending') {
+      this.endTimer += dt;
+      if (this.endTimer > 1.6) {
+        this.field.startFallout();
+        this.phase = 'fallout';
+      }
+    } else if (this.phase === 'fallout' && this.field.state === 'over') {
+      this.phase = 'done';
+      this.onDone();
+    }
+  }
+
+  /**
+   * Sends this field's state, called once per page frame after the steps. That's one message per
+   * SEND_INTERVAL of play, but never more than about 20 a second of real time, so catching up on
+   * missed time doesn't flood the server (it then sends fewer, further apart). Keeps going through
+   * the fall-out, so the other player sees it too, and stops after the round's last state.
+   */
+  sendState(now: number) {
+    if (this.paused || this.phase === 'countdown' || this.sentLast) return;
+    // A little slack on the real-time limit, so frames that come early don't skip a message
+    if (this.time - this.sentTime < SEND_INTERVAL - 1e-9 || now - this.sentAt < SEND_INTERVAL * 1000 * 0.9) return;
+    this.sentTime = this.time;
+    this.sentAt = now;
+    this.sentLast = this.phase === 'done';
+    this.send(this.encoder.encode(this.field, this.time));
+  }
+
+  render(ctx: CanvasRenderingContext2D, alpha = 1) {
+    const f = this.field;
+    const r = this.remote;
+    drawBackground(ctx, SINGLE_W, H);
+
+    const waiting = this.phase === 'waiting';
+    drawField(ctx, f, SINGLE_FIELD, { dim: waiting ? 0.55 : 0, alpha });
+    const fx = SINGLE_FIELD.x + f.width / 2;
+    const fy = SINGLE_FIELD.y + C.FIELD_HEIGHT / 2;
+    if (this.phase === 'countdown') centreText(ctx, String(Math.max(1, Math.ceil(this.countdown))), fx, fy, 110, COLORS.accent);
+    if (waiting) {
+      centreText(ctx, 'TOPPED OUT', fx, fy - 16, 26, COLORS.danger);
+      centreText(ctx, 'the other player is still going', fx, fy + 20, 14, COLORS.dim);
+    }
+
+    const px = 410;
+    const pw = 186;
+    // The Leave button is an HTML element over pauseRect (y 32–70); the cards sit below it.
+    let y = 82;
+    card(ctx, px, y, pw, 96);
+    label(ctx, 'You', px + 18, y + 30);
+    value(ctx, String(f.score), px + 18, y + 72, 30);
+    if (this.phase === 'playing') drawPreview(ctx, f.nextKind, px + pw - 42, y + 50, f.nextSpin, 0.4);
+
+    y = 190;
+    card(ctx, px, y, pw, 356);
+    label(ctx, 'Opponent', px + 18, y + 30);
+    value(ctx, String(r.score), px + 18, y + 66, 24);
+    const k = OnlineGame.MINI;
+    const at = OnlineGame.MINI_AT;
+    const theyOut = r.state === 'toppedOut' && !this.result;
+    ctx.save();
+    ctx.translate(at.x, at.y);
+    ctx.scale(k, k);
+    drawField(ctx, r, { x: 0, y: 0 }, { meter: 'none', dim: theyOut ? 0.55 : 0, alpha });
+    ctx.restore();
+    const mx = at.x + (r.width * k) / 2;
+    const my = at.y + (C.FIELD_HEIGHT * k) / 2;
+    if (!r.live) centreText(ctx, 'GET READY', mx, my, 16, COLORS.dim);
+    else if (theyOut) centreText(ctx, 'TOPPED OUT', mx, my, 16, COLORS.danger);
+
+    y = 558;
+    card(ctx, px, y, pw, 50);
+    label(ctx, 'Wins', px + 18, y + 31);
+    value(ctx, `${this.wins[0]} – ${this.wins[1]}`, px + pw - 18, y + 34, 22, 'right');
   }
 }
 
