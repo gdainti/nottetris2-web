@@ -214,6 +214,30 @@ Everything the app keeps is in `/opt/docker/slicefall/data` (`/data` in the cont
 "Force SSL". The server checks that a WebSocket's `Origin` matches the `Host` header, which Nginx
 Proxy Manager passes through unchanged by default.
 
+### Events chat (tg-pigeon)
+
+Like queesti, the server can post short reports to a Telegram chat through
+[tg-pigeon](https://github.com/gdainti/tg-pigeon). Set both in the server's `.env` and run `./deploy.sh`:
+
+| Name              | Value                                                     |
+| ----------------- | --------------------------------------------------------- |
+| `TG_PIGEON_URL`   | `http://tg-pigeon:5040` (tg-pigeon is on `internet-grid`) |
+| `TG_PIGEON_TOKEN` | `API_TOKEN` from tg-pigeon's `.env`                       |
+
+With either empty, nothing is posted. Only production posts (`NODE_ENV=production`, set by the
+Docker image), so `npm run server` never reaches the real chat. The startup log says which it is.
+
+What gets posted: the container starting (`🚀 slicefall v1.0.0 started`), a Cut, Versus or Online
+round starting, a game finishing with its score, the theme changing, and the sound being muted or
+unmuted or its volumes changed. Setting changes go out once they have stayed put for 2 seconds, so a
+slider drag is one message and a toggle flicked back is none. Players show under their leaderboard
+name, or as `guest` and the start of their browser's random id.
+
+The browser sends facts, not text, to `POST /api/events` (`server/events.ts` writes every message
+and refuses anything else), limited to 60 reports per IP per 10 minutes. A browser whose stored
+leaderboard name is `DEN` (the owner, `OWNER` in `src/events.ts`) sends no reports at all. In Online,
+each player's own browser reports, so a round between two other players posts twice.
+
 ### Manual deploy and rollback
 
 ```sh
