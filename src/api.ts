@@ -41,6 +41,9 @@ export interface GameStats {
   level: number;
   pieces: number;
   durationMs: number;
+  /** T-spins and the points they paid (part of score) */
+  tSpins: number;
+  tSpinPoints: number;
 }
 
 /** A finished game for the server's game log, sent whether or not the score is submitted. */
