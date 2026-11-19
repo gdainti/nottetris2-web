@@ -145,9 +145,8 @@ export class Field {
   private dropping = new Set<Piece>();
   private dropLanded = new Set<Piece>();
   private dropTimer = 0;
-  /** The falling piece's angle at its last full turn (or spawn), and how many turns it has made */
-  private turnFrom = 0;
-  private turns = 0;
+  /** The falling piece has made its T-spin: it can't make another */
+  private spun = false;
 
   constructor(opts: FieldOptions) {
     this.pickKind = opts.pickKind;
@@ -250,23 +249,19 @@ export class Field {
     const p = this.createPiece(kind, PIECE_SHAPES[kind], C.SPAWN_X, C.SPAWN_Y, 0);
     p.body.setLinearVelocity(Vec2(0, this.speed / PX));
     this.active = p;
-    this.turnFrom = 0;
-    this.turns = 0;
+    this.spun = false;
   }
 
   /**
-   * A falling T that has turned a full circle from where it last did (either way) has made a
-   * T-spin. Counting from that last turn, rather than adding up every bit of rotation, means
-   * wiggling back and forth earns nothing.
+   * A falling T that has turned a full circle from how it came in (either way, net, so wiggling
+   * back and forth earns nothing) has made a T-spin. One per piece: turning on earns no more.
    */
   private checkTSpin() {
     const p = this.active;
-    if (!p || p.kind !== T) return;
-    const turned = p.body.getAngle() - this.turnFrom;
-    if (Math.abs(turned) < Math.PI * 2) return;
-    this.turnFrom += Math.sign(turned) * Math.PI * 2;
-    const add = C.TSPIN_POINTS[Math.min(this.turns, C.TSPIN_POINTS.length - 1)];
-    this.turns++;
+    if (!p || p.kind !== T || this.spun) return;
+    if (Math.abs(p.body.getAngle()) < Math.PI * 2) return;
+    this.spun = true;
+    const add = C.TSPIN_POINTS;
     this.tSpins++;
     this.tSpinPoints += add;
     this.score += add;

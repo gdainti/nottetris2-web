@@ -35,9 +35,9 @@ export const CLEAR_BLINKS = 7;
 export const DENSITY_INTERVAL = 1 / 30; // s between row-fill meter updates
 export const SCORE_POPUP_TIME = 0.5; // s
 export const NEXT_SPIN_SPEED = 1; // rad/s, the preview piece slowly turns
-// The physics T-spin (a joke: real T-spins can't happen here): each full turn of a falling T pays
-// TSPIN_POINTS[n] for its nth turn, the last entry for every turn after that.
-export const TSPIN_POINTS = [10, 100];
+// The physics T-spin (a joke: real T-spins can't happen here): a falling T turning a full circle,
+// at most once per piece, pays this.
+export const TSPIN_POINTS = 100;
 export const TSPIN_POPUP_TIME = 1.2; // s the T-SPIN! label blinks
 
 export const SPAWN_X = 224;
