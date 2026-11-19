@@ -22,6 +22,7 @@ import {
   TOUCH_CONTROLS,
 } from './storage';
 import { Menu, esc } from './ui';
+import { PIECE_ORDERS, type PieceOrder } from './pieces';
 
 /** package.json's version, injected by vite.config.ts. */
 declare const __APP_VERSION__: string;
@@ -52,6 +53,7 @@ const MODES: GameMode[] = ['cut', 'versus', 'online'];
 const MODE_NAMES: Record<GameMode, string> = { cut: 'Cut', versus: 'Versus', online: 'Online' };
 const THEMES: ThemeName[] = ['modern', 'retro'];
 const THEME_NAMES: Record<ThemeName, string> = { modern: 'Modern', retro: 'Retro' };
+const PIECE_ORDER_NAMES: Record<PieceOrder, string> = { bag: '7-bag', random: 'Random' };
 const isCoarse = window.matchMedia('(pointer: coarse)').matches;
 
 // ------------------------------------------------------------------ look
@@ -192,11 +194,16 @@ function modeInfo(mode: GameMode): string {
   const text: Record<GameMode, string> = {
     cut: 'Endless. A row is sliced out when it holds 8.1 blocks’ worth of area, cutting right through the pieces. Tighter rows score more. Every 10 rows the pieces fall faster.',
     versus: 'Two players, one keyboard (or two gamepads). Same pieces, mirrored for player 1, and rows are cut as in Cut. Once both have topped out, the higher score wins.',
-    online: 'Two players, each on their own device. Create a game and tell the other player its code, or join theirs with the code they give you. Same pieces for both; once both have topped out, the higher score wins.',
+    online: 'Two players, each on their own device. Create a game and tell the other player its code, or join theirs with the code they give you. Same pieces for both; once both have topped out, the higher score wins. Pieces and Attacks: the setting of whoever creates the game counts.',
   };
   let out = `<p class="info">${text[mode]}</p>`;
+  out += `<p class="info">${
+    settings.pieces === 'bag'
+      ? 'Pieces: 7-bag. All seven come once each, shuffled, before any comes again, so never more than two of a kind in a row.'
+      : 'Pieces: random. Any piece can come next, even the same one many times in a row.'
+  }</p>`;
   if (mode !== 'cut' && settings.attacks) {
-    out += `<p class="info">Attacks: cutting rows sends the other player single blocks. They blink at the top of their column, then drop between pieces once a whole piece has landed. Cut rows of your own first to cancel them.${mode === 'online' ? ' The setting of whoever creates the game counts.' : ''}</p>`;
+    out += `<p class="info">Attacks: cutting rows sends the other player single blocks. They blink at the top of their column, then drop between pieces once a whole piece has landed. Cut rows of your own first to cancel them.</p>`;
   }
   if (mode === 'versus') {
     out += `<div class="keys"><div><b>Player 1</b>A D move · S down · Q E rotate</div><div><b>Player 2</b>J L move · K down · U O rotate<br><span>or ← → ↓ and , .</span></div></div>`;
@@ -323,7 +330,7 @@ function showModeSelect(focus?: number) {
   setLayout(SINGLE_W);
   updateTouch();
   startMusic();
-  // Versus and Online get an Attacks row; switching to or from Cut rebuilds the screen
+  // Versus and Online also get an Attacks row; switching to or from Cut rebuilds the screen
   const versus = settings.mode !== 'cut';
   menu.show({
     title: 'Game type',
@@ -358,6 +365,16 @@ function showModeSelect(focus?: number) {
         : []),
       {
         type: 'choice',
+        label: 'Pieces',
+        options: PIECE_ORDERS.map((o) => PIECE_ORDER_NAMES[o]),
+        get: () => PIECE_ORDERS.indexOf(settings.pieces),
+        set: (i) => {
+          settings.pieces = PIECE_ORDERS[i];
+          saveSettings(settings);
+        },
+      },
+      {
+        type: 'choice',
         label: 'Music',
         options: [...TRACKS.map((t) => t.name), 'Off'],
         get: () => (settings.track < 0 ? TRACKS.length : settings.track),
@@ -369,7 +386,7 @@ function showModeSelect(focus?: number) {
       },
       { type: 'button', label: 'Start', action: () => (settings.mode === 'online' ? showOnline() : startGame()), primary: true },
     ],
-    initial: focus ?? (versus ? 3 : 2),
+    initial: focus ?? (versus ? 4 : 3),
     html: () => modeInfo(settings.mode),
     onBack: showTitle,
     backButton: true,
@@ -463,9 +480,9 @@ function startGame() {
   suppressHeldKeys();
   if (settings.mode === 'versus') {
     audio.stopMusic();
-    game = new VersusGame(startMusic, showVersusResults, settings.attacks);
+    game = new VersusGame(startMusic, showVersusResults, settings.attacks, settings.pieces);
   } else {
-    game = new SingleGame(onSingleOver);
+    game = new SingleGame(onSingleOver, settings.pieces);
     game.start();
     startMusic(true);
   }
@@ -729,7 +746,7 @@ function showConnecting(title: string, back: () => void) {
 
 function createMatch() {
   leaveMatch();
-  const socket = new MatchSocket({ t: 'create', player: playerId(), attacks: settings.attacks });
+  const socket = new MatchSocket({ t: 'create', player: playerId(), attacks: settings.attacks, pieces: settings.pieces });
   match = { socket, wins: [0, 0], rematch: false, theyRematch: false, gone: null };
   socket.on = {
     room: showWaiting,
@@ -810,8 +827,8 @@ function joinMatch(code: string) {
   showConnecting(`Joining ${code}`, () => showJoin(code));
 }
 
-/** Starts a round in the current room (the first one, or a rematch), with the room's attack setting. */
-function startOnline(seed: number, _round: number, attacks: boolean) {
+/** Starts a round in the current room (the first one, or a rematch), with the room's attack and piece settings. */
+function startOnline(seed: number, _round: number, attacks: boolean, pieces: PieceOrder) {
   const m = match;
   if (!m) return;
   m.rematch = false;
@@ -820,7 +837,7 @@ function startOnline(seed: number, _round: number, attacks: boolean) {
   audio.unlock();
   audio.stopMusic();
   suppressHeldKeys();
-  const g = new OnlineGame(seed, m.wins, (msg) => m.socket.send(msg), startMusic, showOnlineResults, attacks);
+  const g = new OnlineGame(seed, m.wins, (msg) => m.socket.send(msg), startMusic, showOnlineResults, attacks, pieces);
   game = g;
   m.socket.on = {
     state: (s) => g.receive(s),

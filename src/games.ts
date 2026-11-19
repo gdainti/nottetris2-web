@@ -3,7 +3,7 @@ import * as C from './config';
 import { Field, type FieldEvent, NO_CONTROLS } from './field';
 import { singleControls, versusControls } from './input';
 import { FieldEncoder, RemoteField, SEND_INTERVAL, type StateMsg } from './online';
-import { MIRROR, randomKind, seededKinds } from './pieces';
+import { MIRROR, type PieceOrder, pieceSequence, seededKinds } from './pieces';
 import { COLORS, FONT, card, drawBackground, drawField, drawPreview, label, value } from './render';
 import { highScores } from './storage';
 
@@ -57,8 +57,11 @@ export class SingleGame {
   /** Seconds of actual play (not paused, not the game-over fall), sent with the score. */
   elapsed = 0;
 
-  constructor(private onOver: () => void) {
-    this.field = new Field({ pickKind: randomKind, emit: (e) => this.onEvent(e) });
+  constructor(
+    private onOver: () => void,
+    pieces: PieceOrder = 'bag',
+  ) {
+    this.field = new Field({ pickKind: pieceSequence(pieces), emit: (e) => this.onEvent(e) });
     this.best = highScores()[0]?.score ?? 0;
   }
 
@@ -161,12 +164,14 @@ export class VersusGame {
     private onDone: () => void,
     /** Cutting rows sends the other player blocks (Field.receiveAttack) */
     attacks = false,
+    pieces: PieceOrder = 'bag',
   ) {
     // Both players get the same sequence; player 1 gets every piece mirrored (as in the original).
+    const next = pieceSequence(pieces);
     const picker = (player: 0 | 1) => {
       let i = 0;
       return () => {
-        while (this.seq.length <= i) this.seq.push(randomKind());
+        while (this.seq.length <= i) this.seq.push(next());
         const k = this.seq[i++];
         return player === 0 ? MIRROR[k] : k;
       };
@@ -323,9 +328,11 @@ export class OnlineGame {
     private onDone: () => void,
     /** The room's setting: cutting rows sends the other player blocks */
     attacks = false,
+    /** The room's setting: how the next piece is chosen */
+    pieces: PieceOrder = 'random',
   ) {
     this.field = new Field({
-      pickKind: seededKinds(seed),
+      pickKind: seededKinds(seed, pieces),
       emit: (e) => this.onEvent(e),
       attack: attacks ? (blocks) => this.send({ t: 'attack', n: blocks }) : undefined,
     });

@@ -1,3 +1,5 @@
+import { PIECE_ORDERS, type PieceOrder } from './pieces';
+
 export type GameMode = 'cut' | 'versus' | 'online';
 const GAME_MODES: GameMode[] = ['cut', 'versus', 'online'];
 export type ThemeName = 'modern' | 'retro';
@@ -18,6 +20,8 @@ export interface Settings {
   moveSide: MoveSide;
   /** Versus and Online: cutting rows sends the other player blocks (online, the host's setting counts) */
   attacks: boolean;
+  /** How the next piece is chosen, 7-bag or fully random (online, the host's setting counts) */
+  pieces: PieceOrder;
 }
 
 export type TouchControls = 'drag' | 'buttons';
@@ -46,6 +50,7 @@ const DEFAULT_SETTINGS: Settings = {
   touchControls: 'drag',
   moveSide: 'left',
   attacks: true,
+  pieces: 'bag',
 };
 
 function read<T>(key: string): T | null {
@@ -72,6 +77,7 @@ export function loadSettings(): Settings {
   if (!TOUCH_CONTROLS.includes(s.touchControls)) s.touchControls = DEFAULT_SETTINGS.touchControls;
   if (!MOVE_SIDES.includes(s.moveSide)) s.moveSide = DEFAULT_SETTINGS.moveSide;
   if (typeof s.attacks !== 'boolean') s.attacks = DEFAULT_SETTINGS.attacks;
+  if (!PIECE_ORDERS.includes(s.pieces)) s.pieces = DEFAULT_SETTINGS.pieces;
   return s;
 }
 
