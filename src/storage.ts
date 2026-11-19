@@ -16,6 +16,8 @@ export interface Settings {
   touchControls: TouchControls;
   /** Which side of the screen the move control goes on; rotation takes the other */
   moveSide: MoveSide;
+  /** Versus and Online: cutting rows sends the other player blocks (online, the host's setting counts) */
+  attacks: boolean;
 }
 
 export type TouchControls = 'drag' | 'buttons';
@@ -43,6 +45,7 @@ const DEFAULT_SETTINGS: Settings = {
   name: '',
   touchControls: 'drag',
   moveSide: 'left',
+  attacks: true,
 };
 
 function read<T>(key: string): T | null {
@@ -68,6 +71,7 @@ export function loadSettings(): Settings {
   if (!GAME_MODES.includes(s.mode)) s.mode = DEFAULT_SETTINGS.mode;
   if (!TOUCH_CONTROLS.includes(s.touchControls)) s.touchControls = DEFAULT_SETTINGS.touchControls;
   if (!MOVE_SIDES.includes(s.moveSide)) s.moveSide = DEFAULT_SETTINGS.moveSide;
+  if (typeof s.attacks !== 'boolean') s.attacks = DEFAULT_SETTINGS.attacks;
   return s;
 }
 

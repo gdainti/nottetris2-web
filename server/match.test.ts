@@ -78,10 +78,10 @@ describe('online rooms', () => {
   });
 
   /** Opens a room and joins it; returns both players once both got their start. */
-  async function pair(ids: [unknown, unknown] = [undefined, undefined]) {
+  async function pair(ids: [unknown, unknown] = [undefined, undefined], attacks?: boolean) {
     const a = new Client(url);
     await a.opened;
-    a.send({ t: 'create', player: ids[0] });
+    a.send({ t: 'create', player: ids[0], attacks });
     const room = await a.next();
     assert.equal(room.t, 'room');
     const b = new Client(url);
@@ -283,6 +283,59 @@ describe('online rooms', () => {
     assert.equal(row.host, null);
     assert.equal(row.guest, null);
     assert.equal(row.ended, 'host-left');
+  });
+
+  test('start says whether attacks are on: the host decides, on unless they say no', async () => {
+    const on = await pair();
+    assert.equal(on.sa.attacks, true);
+    assert.equal(on.sb.attacks, true);
+    on.a.close();
+    on.b.close();
+    const off = await pair(undefined, false);
+    assert.equal(off.sa.attacks, false);
+    assert.equal(off.sb.attacks, false);
+    off.a.close();
+    off.b.close();
+  });
+
+  test('attacks go to the other player, at most one a second and 1 to 5 blocks', async () => {
+    const { a, b } = await pair();
+    a.send({ t: 'attack', n: 2 });
+    a.send({ t: 'attack', n: 1 }); // too soon after the last one
+    b.send({ t: 'attack', n: 0 });
+    b.send({ t: 'attack', n: 6 });
+    b.send({ t: 'attack', n: 1.5 });
+    b.send({ t: 'attack', n: '3' });
+    b.send({ t: 'attack', n: 3 });
+    a.send({ t: 'state', s: 1 });
+    b.send({ t: 'state', s: 2 });
+    // Order is kept, so what arrives before each state is everything that got through
+    assert.deepEqual(await b.next(), { t: 'attack', n: 2 });
+    assert.deepEqual(await b.next(), { t: 'state', s: 1 });
+    assert.deepEqual(await a.next(), { t: 'attack', n: 3 });
+    assert.deepEqual(await a.next(), { t: 'state', s: 2 });
+    a.close();
+    b.close();
+  });
+
+  test('no attacks once either player has topped out, or with attacks off', async () => {
+    const one = await pair();
+    one.a.send({ t: 'over', score: 10 });
+    one.b.send({ t: 'attack', n: 2 }); // a is out: nothing to send it to
+    one.a.send({ t: 'attack', n: 2 }); // a is out: can't attack
+    one.b.send({ t: 'state', s: 1 });
+    one.a.send({ t: 'state', s: 2 });
+    assert.deepEqual(await one.a.next(), { t: 'state', s: 1 });
+    assert.deepEqual(await one.b.next(), { t: 'state', s: 2 });
+    one.a.close();
+    one.b.close();
+
+    const off = await pair(undefined, false);
+    off.a.send({ t: 'attack', n: 2 });
+    off.a.send({ t: 'state', s: 3 });
+    assert.deepEqual(await off.b.next(), { t: 'state', s: 3 });
+    off.a.close();
+    off.b.close();
   });
 
   test('another site may not open a room', async () => {

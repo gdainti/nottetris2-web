@@ -34,6 +34,15 @@ function eventSound(e: FieldEvent) {
     case 'levelup':
       audio.play('levelup');
       break;
+    case 'incoming':
+      audio.play('warn');
+      break;
+    case 'garbage':
+      audio.play('drop');
+      break;
+    case 'countered':
+      audio.play('counter');
+      break;
     default:
       break;
   }
@@ -150,6 +159,8 @@ export class VersusGame {
   constructor(
     private onStart: () => void,
     private onDone: () => void,
+    /** Cutting rows sends the other player blocks (Field.receiveAttack) */
+    attacks = false,
   ) {
     // Both players get the same sequence; player 1 gets every piece mirrored (as in the original).
     const picker = (player: 0 | 1) => {
@@ -160,9 +171,10 @@ export class VersusGame {
         return player === 0 ? MIRROR[k] : k;
       };
     };
+    const attack = (to: 0 | 1) => (attacks ? (blocks: number) => this.fields[to].receiveAttack(blocks) : undefined);
     this.fields = [
-      new Field({ pickKind: picker(0), emit: (e) => this.onEvent(0, e) }),
-      new Field({ pickKind: picker(1), emit: (e) => this.onEvent(1, e) }),
+      new Field({ pickKind: picker(0), emit: (e) => this.onEvent(0, e), attack: attack(1) }),
+      new Field({ pickKind: picker(1), emit: (e) => this.onEvent(1, e), attack: attack(0) }),
     ];
   }
 
@@ -309,8 +321,14 @@ export class OnlineGame {
     private send: (msg: object) => void,
     private onStart: () => void,
     private onDone: () => void,
+    /** The room's setting: cutting rows sends the other player blocks */
+    attacks = false,
   ) {
-    this.field = new Field({ pickKind: seededKinds(seed), emit: (e) => this.onEvent(e) });
+    this.field = new Field({
+      pickKind: seededKinds(seed),
+      emit: (e) => this.onEvent(e),
+      attack: attacks ? (blocks) => this.send({ t: 'attack', n: blocks }) : undefined,
+    });
   }
 
   get width() {
@@ -323,6 +341,11 @@ export class OnlineGame {
 
   receive(msg: StateMsg) {
     this.remote.receive(msg);
+  }
+
+  /** The other player cut rows: blocks for this field (ignored once this player has topped out). */
+  receiveAttack(blocks: number) {
+    if (this.phase === 'playing') this.field.receiveAttack(blocks);
   }
 
   /** Both players have topped out: the final scores, from the server. */

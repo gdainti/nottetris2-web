@@ -15,7 +15,7 @@ import {
   yRange,
   area,
 } from './geometry';
-import { PIECE_SHAPES } from './pieces';
+import { GARBAGE, PIECE_SHAPES } from './pieces';
 
 export interface Controls {
   left: boolean;
@@ -33,7 +33,11 @@ export interface Controls {
 
 export const NO_CONTROLS: Controls = { left: false, right: false, down: false, rotL: false, rotR: false };
 
-export type FieldEvent = 'land' | 'clear' | 'clear4' | 'levelup' | 'topout' | 'fallout' | 'over';
+/**
+ * incoming: the other player's attack arrived; garbage: waiting blocks dropped; countered: a cut
+ * cancelled blocks that were waiting (Versus attacks).
+ */
+export type FieldEvent = 'land' | 'clear' | 'clear4' | 'levelup' | 'topout' | 'fallout' | 'over' | 'incoming' | 'garbage' | 'countered';
 
 export type FieldState = 'idle' | 'playing' | 'cutting' | 'toppedOut' | 'failing' | 'over';
 
@@ -48,6 +52,19 @@ export interface Piece {
   prevX: number;
   prevY: number;
   prevAngle: number;
+}
+
+/** A block from the other player's attack, waiting at the top of its column (Field.receiveAttack) */
+export interface Incoming {
+  /** Column, 0 to GARBAGE_SLOTS - 1 (see slotX) */
+  slot: number;
+  /** A piece has landed since it came: it drops on the next landing that cuts nothing */
+  armed: boolean;
+}
+
+/** Centre x of a garbage column, in physics pixels, for a well with these inner edges. */
+export function slotX(left: number, width: number, slot: number): number {
+  return left + C.BLOCK / 2 + (slot * (width - C.BLOCK)) / (C.GARBAGE_SLOTS - 1);
 }
 
 export interface PieceView {
@@ -67,6 +84,11 @@ interface FixtureTag {
 interface FieldOptions {
   pickKind: () => number;
   emit?: (e: FieldEvent) => void;
+  /**
+   * Versus attacks: called with how many blocks to send the other player after a cut (once its
+   * own waiting blocks are cancelled). Without it, cuts send nothing.
+   */
+  attack?: (blocks: number) => void;
 }
 
 const PX = C.PX_PER_M;
@@ -100,6 +122,8 @@ export class Field {
   cutTimer = C.CLEAR_DURATION;
   /** What the field looked like right before the cut, drawn while the rows blink. */
   snapshot: PieceView[] = [];
+  /** Blocks the other player sent, oldest first, waiting to drop */
+  incoming: Incoming[] = [];
 
   private world: World;
   private ground: Fixture | null = null;
@@ -109,11 +133,17 @@ export class Field {
   private failTime = 0;
   private pickKind: () => number;
   private emit: (e: FieldEvent) => void;
+  private attack: ((blocks: number) => void) | null;
   private nextId = 1;
+  /** Blocks dropped on the last landing, and which of them have touched down; the next piece waits */
+  private dropping = new Set<Piece>();
+  private dropLanded = new Set<Piece>();
+  private dropTimer = 0;
 
   constructor(opts: FieldOptions) {
     this.pickKind = opts.pickKind;
     this.emit = opts.emit ?? (() => {});
+    this.attack = opts.attack ?? null;
     this.left = 56;
     this.right = 384;
     this.nextKind = this.pickKind();
@@ -214,9 +244,16 @@ export class Field {
   }
 
   private onContact(c: Contact) {
-    if (this.state !== 'playing' || !this.active) return;
     const a = c.getFixtureA().getUserData() as FixtureTag | null;
     const b = c.getFixtureB().getUserData() as FixtureTag | null;
+    // A dropped block is down once it touches anything but a side wall
+    for (const [mine, other] of [
+      [a, b],
+      [b, a],
+    ]) {
+      if (mine?.piece && this.dropping.has(mine.piece) && other?.wall !== 'left' && other?.wall !== 'right') this.dropLanded.add(mine.piece);
+    }
+    if (this.state !== 'playing' || !this.active) return;
     const aIsActive = a?.piece === this.active;
     const bIsActive = b?.piece === this.active;
     if (!aIsActive && !bIsActive) return;
@@ -252,9 +289,15 @@ export class Field {
     if (this.state === 'playing' && this.active) this.applyControls(dt, controls);
 
     this.updateBullets();
+    this.limitDropSpeed();
     this.landed = false;
     this.world.step(dt, C.VELOCITY_ITERATIONS, C.POSITION_ITERATIONS);
     if (this.landed && this.state === 'playing' && this.active) this.endBlock();
+    if (this.dropping.size && this.state === 'playing') {
+      this.dropTimer += dt;
+      const down = [...this.dropping].every((p) => this.dropLanded.has(p));
+      if (down || this.dropTimer >= C.GARBAGE_SPAWN_WAIT) this.endDrop();
+    }
 
     // endBlock() may have just switched to 'cutting' (TS can't see that through the call).
     if ((this.state as FieldState) !== 'cutting') {
@@ -338,14 +381,83 @@ export class Field {
     this.pieces.push(piece);
 
     if (piece.body.getPosition().y * PX < C.LOSING_Y) {
-      this.state = 'toppedOut';
-      this.emit('topout');
+      this.topOut();
       return;
     }
 
     this.placed++;
-    this.checkRows();
-    this.spawn();
+    const cut = this.checkRows();
+    // The other player's blocks drop on a landing that cuts nothing, once a whole piece has passed
+    // since they came; the ones that came during this piece wait for the next landing.
+    if (!cut) this.dropGarbage();
+    for (const b of this.incoming) b.armed = true;
+    // Dropped blocks fall between pieces: the next one comes once they are down (see update)
+    if (this.dropping.size === 0) this.spawn();
+  }
+
+  private topOut() {
+    this.state = 'toppedOut';
+    this.incoming = [];
+    this.emit('topout');
+  }
+
+  /**
+   * Versus: the other player cut rows and sends `blocks` single blocks. Each picks a free column
+   * and waits at the top of it (drawn blinking) until it drops; see endBlock. Ignored once this
+   * player has topped out.
+   */
+  receiveAttack(blocks: number) {
+    if (this.state !== 'playing' && this.state !== 'cutting') return;
+    const all = [...Array(C.GARBAGE_SLOTS).keys()];
+    let added = 0;
+    for (let i = 0; i < blocks && this.incoming.length < C.GARBAGE_MAX_QUEUE; i++) {
+      const used = new Set(this.incoming.map((b) => b.slot));
+      const free = all.filter((s) => !used.has(s));
+      const pool = free.length ? free : all;
+      this.incoming.push({ slot: pool[Math.floor(Math.random() * pool.length)], armed: false });
+      added++;
+    }
+    if (added) this.emit('incoming');
+  }
+
+  /** Drops the armed blocks, one per column and at most GARBAGE_MAX_DROP; the rest wait. */
+  private dropGarbage() {
+    const used = new Set<number>();
+    const waiting: Incoming[] = [];
+    for (const b of this.incoming) {
+      if (!b.armed || used.has(b.slot) || used.size >= C.GARBAGE_MAX_DROP) {
+        waiting.push(b);
+        continue;
+      }
+      used.add(b.slot);
+      const p = this.createPiece(GARBAGE, PIECE_SHAPES[GARBAGE], slotX(this.left, this.width, b.slot), C.GARBAGE_SPAWN_Y, 0);
+      p.body.setLinearVelocity(Vec2(0, C.GARBAGE_DROP_SPEED / PX));
+      this.pieces.push(p);
+      this.dropping.add(p);
+    }
+    this.incoming = waiting;
+    if (used.size) {
+      this.dropTimer = 0;
+      this.emit('garbage');
+    }
+  }
+
+  /** Dropped blocks fall no faster than GARBAGE_DROP_SPEED until they land, so they settle rather than smash. */
+  private limitDropSpeed() {
+    for (const p of this.dropping) {
+      if (this.dropLanded.has(p)) continue;
+      const v = p.body.getLinearVelocity();
+      if (v.y * PX > C.GARBAGE_DROP_SPEED) p.body.setLinearVelocity(Vec2(v.x, C.GARBAGE_DROP_SPEED / PX));
+    }
+  }
+
+  /** The dropped blocks are down (or took too long): the next piece comes, unless one rests above the line. */
+  private endDrop() {
+    const high = [...this.dropping].some((p) => p.body.getPosition().y * PX < C.LOSING_Y);
+    this.dropping.clear();
+    this.dropLanded.clear();
+    if (high) this.topOut();
+    else this.spawn();
   }
 
   /** Lets every piece drop out through the floor (the game-over animation). */
@@ -357,6 +469,9 @@ export class Field {
     }
     this.state = 'failing';
     this.failTime = 0;
+    this.incoming = [];
+    this.dropping.clear();
+    this.dropLanded.clear();
     if (this.ground) {
       this.ground.getBody().destroyFixture(this.ground);
       this.ground = null;
@@ -369,6 +484,8 @@ export class Field {
   computeRowAreas() {
     this.rowArea.fill(0);
     for (const p of this.pieces) {
+      // Blocks still falling in don't fill rows on their way down
+      if (this.dropping.has(p) && !this.dropLanded.has(p)) continue;
       const pos = p.body.getPosition();
       const angle = p.body.getAngle();
       for (const s of p.shapes) {
@@ -388,7 +505,8 @@ export class Field {
     return Math.min(1, this.rowArea[r] / (C.BLOCK_AREA * C.CLEAR_THRESHOLD));
   }
 
-  private checkRows() {
+  /** Cuts every row full enough after a landing; true if there were any. */
+  private checkRows(): boolean {
     this.computeRowAreas();
     const rows: number[] = [];
     for (let r = 0; r < C.ROWS; r++) {
@@ -396,7 +514,7 @@ export class Field {
     }
     if (rows.length === 0) {
       this.emit('land');
-      return;
+      return false;
     }
 
     this.state = 'cutting';
@@ -427,6 +545,19 @@ export class Field {
     for (const r of rows) this.removeRow(r);
     // Pieces that rested on something that vanished must not stay asleep in mid-air.
     for (const p of this.pieces) p.body.setAwake(true);
+
+    if (this.attack) {
+      // A cut first cancels blocks still waiting here, oldest first; only the rest is sent
+      let send = C.ATTACK_BLOCKS[Math.min(n, C.ATTACK_BLOCKS.length - 1)];
+      const cancel = Math.min(send, this.incoming.length);
+      if (cancel) {
+        this.incoming.splice(0, cancel);
+        this.emit('countered');
+      }
+      send -= cancel;
+      if (send > 0) this.attack(send);
+    }
+    return true;
   }
 
   /** Slices every settled piece along the row's top and bottom edge and drops what was inside. */

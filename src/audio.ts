@@ -13,7 +13,11 @@ export type Sfx =
   | 'pause'
   | 'beep'
   | 'go'
-  | 'highscore';
+  | 'highscore'
+  // Versus attacks: blocks coming, blocks dropping, blocks cancelled by a cut
+  | 'warn'
+  | 'drop'
+  | 'counter';
 
 type Note = [midi: number | null, steps: number];
 
@@ -200,6 +204,16 @@ export class AudioEngine {
         break;
       case 'highscore':
         arp([72, 76, 79, 84, 79, 84, 88], 0.09, 0.16, 'square', 0.16);
+        break;
+      case 'warn':
+        arp([57, 57], 0.13, 0.08, 'square', 0.18);
+        break;
+      case 'drop':
+        this.noise(out, t, 0.14, 0.45, 600);
+        this.tone(out, 120, t, 0.2, 'sine', 0.5, 40);
+        break;
+      case 'counter':
+        arp([84, 91, 96], 0.045, 0.12, 'triangle', 0.24);
         break;
     }
   }

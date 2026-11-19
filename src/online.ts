@@ -4,8 +4,9 @@
 // messages. Neither side runs the other's physics: each browser only simulates its own field.
 
 import * as C from './config';
-import type { Field, FieldState, PieceView } from './field';
+import type { Field, FieldState, Incoming, PieceView } from './field';
 import type { Poly } from './geometry';
+import { GARBAGE } from './pieces';
 import type { DrawableField } from './render';
 
 /** Play time between state messages: 20 a second. */
@@ -35,12 +36,15 @@ export interface StateMsg {
   r?: number[];
   /** Rows a cut has just taken out */
   c?: number[];
+  /** Versus attacks waiting to drop, when that changed: column, armed (1) or not (0), for each */
+  w?: number[];
 }
 
 export class FieldEncoder {
   private sent = new Map<number, [number, number, number]>();
   private rows = '';
   private cuts = 0;
+  private waiting = '';
 
   encode(f: Field, time: number): StateMsg {
     const msg: StateMsg = { t: 'state', tm: r3(time), st: f.state, s: f.score, n: f.nextKind };
@@ -76,6 +80,12 @@ export class FieldEncoder {
       this.rows = key;
       msg.r = rows;
     }
+    const waiting = f.incoming.flatMap((b) => [b.slot, b.armed ? 1 : 0]);
+    const wkey = waiting.join();
+    if (wkey !== this.waiting) {
+      this.waiting = wkey;
+      msg.w = waiting;
+    }
     if (f.cuts !== this.cuts) {
       this.cuts = f.cuts;
       msg.c = f.removedRows.flatMap((on, r) => (on ? [r] : []));
@@ -108,6 +118,7 @@ export class RemoteField implements DrawableField {
   readonly width = 328;
   snapshot: PieceView[] = [];
   removedRows: boolean[] = new Array(C.ROWS).fill(false);
+  incoming: Incoming[] = [];
   nextKind = 0;
   nextSpin = 0;
 
@@ -142,7 +153,7 @@ export class RemoteField implements DrawableField {
     if (Array.isArray(m.add)) {
       for (const entry of m.add) {
         const [id, kind, flat] = Array.isArray(entry) ? entry : [];
-        if (!num(id) || !num(kind) || kind < 0 || kind > 6 || !Array.isArray(flat)) continue;
+        if (!num(id) || !num(kind) || kind < 0 || kind > GARBAGE || !Array.isArray(flat)) continue;
         const shapes: Poly[] = [];
         for (const f of flat) {
           if (!Array.isArray(f) || f.length < 6 || !f.every(num)) continue;
@@ -160,6 +171,12 @@ export class RemoteField implements DrawableField {
     }
     if (Array.isArray(m.r) && m.r.length === C.ROWS && m.r.every(num)) this.fullness = m.r.map((v) => Math.min(1, Math.max(0, v / 100)));
     if (m.n >= 0 && m.n <= 6) this.nextKind = m.n;
+    if (Array.isArray(m.w) && m.w.length <= 2 * C.GARBAGE_MAX_QUEUE && m.w.every(num)) {
+      this.incoming = [];
+      for (let i = 0; i + 1 < m.w.length; i += 2) {
+        if (m.w[i] >= 0 && m.w[i] < C.GARBAGE_SLOTS) this.incoming.push({ slot: m.w[i], armed: m.w[i + 1] === 1 });
+      }
+    }
 
     const cut = Array.isArray(m.c) && m.c.every(num) ? m.c : null;
     const frame: Frame = { tm: m.tm, st: m.st, score: m.s, bodies, cut };

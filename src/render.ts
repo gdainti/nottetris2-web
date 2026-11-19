@@ -1,7 +1,7 @@
 import * as C from './config';
-import type { PieceView } from './field';
+import { type Incoming, type PieceView, slotX } from './field';
 import { type Poly, shrinkPolygon } from './geometry';
-import { PIECE_CENTRES, PIECE_SHAPES } from './pieces';
+import { GARBAGE, PIECE_CENTRES, PIECE_SHAPES } from './pieces';
 import type { ThemeName } from './storage';
 
 interface Palette {
@@ -69,7 +69,8 @@ const WALL = 4 * PIXEL;
 
 // One hue per piece kind, in PIECE_NAMES order (I J L O S T Z), following the usual
 // convention of modern block games: I cyan, J blue, L orange, O yellow, S green, T purple, Z red.
-const PIECE_BASE = ['#2fd4d4', '#4a78ff', '#ff8c2e', '#ffd23f', '#5fd35b', '#b452e8', '#f0444f'];
+// Then the grey stone of the single blocks a Versus attack drops (GARBAGE).
+const PIECE_BASE = ['#2fd4d4', '#4a78ff', '#ff8c2e', '#ffd23f', '#5fd35b', '#b452e8', '#f0444f', '#7d8299'];
 
 const MODERN: Theme = {
   colors: {
@@ -122,6 +123,8 @@ const RETRO_BLOCKS: string[][] = [
   ['00000000', '03333330', '03322330', '03222230', '03222230', '03322330', '03333330', '00000000'],
   // Z: mid with four rivets
   ['00000000', '02222220', '02122120', '02222220', '02222220', '02122120', '02222220', '00000000'],
+  // GARBAGE: dark with a cross
+  ['00000000', '01111110', '01211210', '01122110', '01122110', '01211210', '01111110', '00000000'],
 ];
 
 const RETRO: Theme = {
@@ -317,6 +320,8 @@ export function drawBackground(ctx: CanvasRenderingContext2D, w: number, h: numb
 export interface DrawableField {
   readonly left: number;
   readonly width: number;
+  /** Versus attacks waiting to drop, drawn blinking at the top of their columns */
+  readonly incoming: readonly Incoming[];
   /** What the field looked like right before the cut, drawn while the rows blink */
   readonly snapshot: PieceView[];
   readonly removedRows: boolean[];
@@ -372,6 +377,7 @@ export function drawField(ctx: CanvasRenderingContext2D, field: DrawableField, a
         if (field.removedRows[r]) ctx.fillRect(field.left, r * C.BLOCK, w, C.BLOCK);
       }
     }
+    if (field.incoming.length) drawIncoming(ctx, field);
   }
   ctx.restore();
 
@@ -381,6 +387,35 @@ export function drawField(ctx: CanvasRenderingContext2D, field: DrawableField, a
   }
 
   if (opts.meter !== 'none') drawRowMeter(ctx, field, at, opts.meter ?? 'left');
+}
+
+/**
+ * Blocks from the other player waiting to drop: a faint stripe down each one's column and a block
+ * blinking at its top. Armed ones (dropping on the next landing that cuts nothing) blink fast and
+ * solid; the rest slowly, as an outline. In the field's own coordinates.
+ */
+function drawIncoming(ctx: CanvasRenderingContext2D, field: DrawableField) {
+  const now = performance.now() / 1000;
+  const size = C.BLOCK - 4;
+  for (const b of field.incoming) {
+    const x = slotX(field.left, field.width, b.slot);
+    ctx.globalAlpha = b.armed ? 0.1 : 0.05;
+    ctx.fillStyle = COLORS.danger;
+    ctx.fillRect(x - C.BLOCK / 2, 0, C.BLOCK, C.FIELD_HEIGHT);
+    ctx.globalAlpha = 1;
+    const on = b.armed ? now % 0.25 < 0.15 : now % 0.8 < 0.5;
+    if (!on) continue;
+    if (b.armed) {
+      ctx.save();
+      ctx.translate(x, C.BLOCK / 2);
+      drawBlocks(ctx, PIECE_SHAPES[GARBAGE], GARBAGE);
+      ctx.restore();
+    } else {
+      ctx.strokeStyle = COLORS.danger;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x - size / 2 + 1, 3, size - 2, size - 2);
+    }
+  }
 }
 
 /** Per-row fill gauge beside the well: how close each row is to being cut. */

@@ -41,6 +41,19 @@ export const SPAWN_Y = -64;
 export const LOSING_Y = 0; // landing with the piece centre above this line ends the game
 export const FALLOUT_Y = 648; // game over screen once every piece has dropped below this
 
+// Versus and Online attacks (Field.receiveAttack). Cutting rows sends the other player single blocks:
+// ATTACK_BLOCKS[n] for n rows at once (the last entry for more). They wait at the top of their
+// column until a whole piece has landed after they came, then drop on the next landing that cuts
+// nothing, between pieces: the next piece waits until they are down. A cut first cancels blocks
+// still waiting, and only the rest is sent.
+export const ATTACK_BLOCKS = [0, 1, 2, 3, 5];
+export const GARBAGE_SLOTS = 10; // columns a block can drop in, evenly across the well
+export const GARBAGE_MAX_DROP = 6; // blocks dropping on one landing; more wait for the next
+export const GARBAGE_MAX_QUEUE = 20; // blocks waiting at most; more are lost
+export const GARBAGE_SPAWN_Y = -96; // above the well, below the ceiling
+export const GARBAGE_DROP_SPEED = 600; // px/s, top falling speed of a dropped block
+export const GARBAGE_SPAWN_WAIT = 1.5; // s, longest the next piece waits for dropped blocks to land
+
 export const STEP = 1 / 60;
 // The original passes 10/10 to LÖVE's Box2D. planck.js needs more to hold up a tall pile of small
 // cut fragments: at 10/10 heavy pieces sink into the crumbs below them (up to 60 px) and then shove

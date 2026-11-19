@@ -83,6 +83,30 @@ docker exec slicefall node server/admin.ts delete-name ANN    # all of a player'
 | `GET /healthz`                            | `ok` when the database answers |
 | `GET /api/match` (WebSocket)              | Online Versus rooms; see below |
 
+## Attacks (Versus and Online)
+
+With **Attacks: On** in the mode menu (the default), cutting rows sends the other player single
+blocks of grey stone. How many, by rows cut at once: 1 → 1, 2 → 2, 3 → 3, 4 or more → 5
+(`ATTACK_BLOCKS` in `src/config.ts`, with the other numbers below).
+
+Like garbage in Tetris 99, they go by your pieces, not a clock:
+
+1. **They arrive.** Each block picks one of 10 columns (a free one when it can) and waits at the
+   top of it: a red outline blinking slowly, and a faint stripe down the column.
+2. **They arm.** When your next piece lands, the waiting blocks arm and blink fast as solid
+   blocks. So you always get at least one whole piece of warning.
+3. **They drop**, on the next landing that cuts nothing, between your pieces: they fall in from
+   above the well at up to 600 px/s and your next piece comes once they are down (well under a
+   second, 1.5 s at most). No piece of yours is in the air meanwhile, so they never hit it and
+   never appear inside it. At most 6 drop at once; the rest wait for the next landing. A block that
+   comes to rest above the top line ends your game, as a piece would.
+4. **Cutting cancels them.** A cut first takes away as many waiting blocks as it would send,
+   oldest first, and only sends the rest. Nothing drops on a landing that cut rows.
+
+Dropped blocks count toward rows like any other block and are sliced like one. Blocks sent to a
+player who has topped out are lost. Sounds: two low beeps when blocks arrive, a thud when they
+drop, a chime when a cut cancels some.
+
 ## Online Versus
 
 One player picks Online → Create a game and gets a four-character code (no I, L, O, 0 or 1). The
@@ -118,6 +142,13 @@ nobody joins close after 30 minutes; 1000 rooms at once; 30 creates or joins per
 minutes (so codes can't be guessed by brute force); 100 messages a second and 32 kB a message per
 connection. Browsers must come from the same host (the `Origin` header is checked). Rooms live in
 memory, so a deploy ends the games in progress.
+
+With attacks on (the host's setting, sent with `create` and passed to both in each round's
+`start`), a cut sends `{ t: 'attack', n }`. The server passes it on only while both players are
+still in the round, for 1 to 5 blocks, and at most one per player per second: a cut blinks for
+1.2 s before the next piece can land, so a real client never sends faster. The receiving browser
+drops the blocks into its own field, and the blinking markers travel in its state messages, so
+the attacker watches them arrive in the other well.
 
 As with the leaderboard, each browser reports its own score, so a modified client could lie. That
 is fine between friends, and it's why there is no Versus leaderboard.
@@ -231,8 +262,8 @@ The itch page's cover, screenshots and gameplay GIF are in `itch/screenshots/`.
 | Mode   | Original | Rules |
 | ------ | -------- | ----- |
 | Cut    | Game A   | Endless. A row is cut out when it holds 8.1 blocks' worth of area. Score = `ceil((n·3)^(avg^10)·20 + n²·40)` for `n` rows at average density `avg`. Level up every 10 rows (+7 px/s fall speed). |
-| Versus | 2P       | Two Cut fields side by side, same piece sequence (mirrored for player 1). Both play until they top out; higher score wins. |
-| Online | —        | Versus against a player on another device, joined by a code. Each player's own field is full size; the other player's is drawn small beside it. Same pieces for both, not mirrored. |
+| Versus | 2P       | Two Cut fields side by side, same piece sequence (mirrored for player 1). Both play until they top out; higher score wins. With attacks on, cuts drop blocks on the other player (see Attacks). |
+| Online | —        | Versus against a player on another device, joined by a code. Each player's own field is full size; the other player's is drawn small beside it. Same pieces for both, not mirrored. Attacks as in Versus. |
 
 ## Controls
 

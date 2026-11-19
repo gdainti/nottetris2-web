@@ -195,6 +195,9 @@ function modeInfo(mode: GameMode): string {
     online: 'Two players, each on their own device. Create a game and tell the other player its code, or join theirs with the code they give you. Same pieces for both; once both have topped out, the higher score wins.',
   };
   let out = `<p class="info">${text[mode]}</p>`;
+  if (mode !== 'cut' && settings.attacks) {
+    out += `<p class="info">Attacks: cutting rows sends the other player single blocks. They blink at the top of their column, then drop between pieces once a whole piece has landed. Cut rows of your own first to cancel them.${mode === 'online' ? ' The setting of whoever creates the game counts.' : ''}</p>`;
+  }
   if (mode === 'versus') {
     out += `<div class="keys"><div><b>Player 1</b>A D move · S down · Q E rotate</div><div><b>Player 2</b>J L move · K down · U O rotate<br><span>or ← → ↓ and , .</span></div></div>`;
   } else if (mode === 'cut') {
@@ -312,13 +315,16 @@ function showLeaderboard() {
   loadBoards(view, fetchBoards());
 }
 
-function showModeSelect() {
+/** `focus`: the row to select (by default Start). */
+function showModeSelect(focus?: number) {
   leaveMatch();
   state = 'menu';
   game = null;
   setLayout(SINGLE_W);
   updateTouch();
   startMusic();
+  // Versus and Online get an Attacks row; switching to or from Cut rebuilds the screen
+  const versus = settings.mode !== 'cut';
   menu.show({
     title: 'Game type',
     // The subtitle takes the row Back used to have, so Start still lands under the mouse after clicking Play
@@ -333,8 +339,23 @@ function showModeSelect() {
         set: (i) => {
           settings.mode = MODES[i];
           saveSettings(settings);
+          if ((settings.mode !== 'cut') !== versus) showModeSelect(0);
         },
       },
+      ...(versus
+        ? [
+            {
+              type: 'choice' as const,
+              label: 'Attacks',
+              options: ['On', 'Off'],
+              get: () => (settings.attacks ? 0 : 1),
+              set: (i: number) => {
+                settings.attacks = i === 0;
+                saveSettings(settings);
+              },
+            },
+          ]
+        : []),
       {
         type: 'choice',
         label: 'Music',
@@ -348,7 +369,7 @@ function showModeSelect() {
       },
       { type: 'button', label: 'Start', action: () => (settings.mode === 'online' ? showOnline() : startGame()), primary: true },
     ],
-    initial: 2,
+    initial: focus ?? (versus ? 3 : 2),
     html: () => modeInfo(settings.mode),
     onBack: showTitle,
     backButton: true,
@@ -442,7 +463,7 @@ function startGame() {
   suppressHeldKeys();
   if (settings.mode === 'versus') {
     audio.stopMusic();
-    game = new VersusGame(startMusic, showVersusResults);
+    game = new VersusGame(startMusic, showVersusResults, settings.attacks);
   } else {
     game = new SingleGame(onSingleOver);
     game.start();
@@ -708,7 +729,7 @@ function showConnecting(title: string, back: () => void) {
 
 function createMatch() {
   leaveMatch();
-  const socket = new MatchSocket({ t: 'create', player: playerId() });
+  const socket = new MatchSocket({ t: 'create', player: playerId(), attacks: settings.attacks });
   match = { socket, wins: [0, 0], rematch: false, theyRematch: false, gone: null };
   socket.on = {
     room: showWaiting,
@@ -789,8 +810,8 @@ function joinMatch(code: string) {
   showConnecting(`Joining ${code}`, () => showJoin(code));
 }
 
-/** Starts a round in the current room (the first one, or a rematch). */
-function startOnline(seed: number) {
+/** Starts a round in the current room (the first one, or a rematch), with the room's attack setting. */
+function startOnline(seed: number, _round: number, attacks: boolean) {
   const m = match;
   if (!m) return;
   m.rematch = false;
@@ -799,10 +820,11 @@ function startOnline(seed: number) {
   audio.unlock();
   audio.stopMusic();
   suppressHeldKeys();
-  const g = new OnlineGame(seed, m.wins, (msg) => m.socket.send(msg), startMusic, showOnlineResults);
+  const g = new OnlineGame(seed, m.wins, (msg) => m.socket.send(msg), startMusic, showOnlineResults, attacks);
   game = g;
   m.socket.on = {
     state: (s) => g.receive(s),
+    attack: (blocks) => g.receiveAttack(blocks),
     result: (you, them) => g.finish(you, them),
     rematch: () => {
       m.theyRematch = true;
