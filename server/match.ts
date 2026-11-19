@@ -3,15 +3,18 @@
 // and streams what it looks like to the other, so nothing here knows about the game's physics.
 //
 // Client -> server (JSON text messages)
-//   { t: 'create', player? }      first message: open a room (player: the browser's random id)
+//   { t: 'create', player?, attacks? }  first message: open a room (player: the browser's random id;
+//                                 attacks: cutting rows sends blocks, the host's setting, on unless false)
 //   { t: 'join', code, player? }  first message: join a room
 //   { t: 'state', ... }           passed on to the other player as is
+//   { t: 'attack', n }            this player's cut sends the other n blocks (1 to MAX_ATTACK)
 //   { t: 'over', score }          this player topped out with this score
 //   { t: 'rematch' }              after a result: play again
 // Server -> client
 //   { t: 'room', code }           the room is open, waiting for the other player
-//   { t: 'start', seed, round }   both are in: start a round with this piece seed
+//   { t: 'start', seed, round, attacks }  both are in: start a round with this piece seed
 //   { t: 'state', ... }           the other player's field
+//   { t: 'attack', n }            blocks from the other player
 //   { t: 'result', you, them }    both have topped out: the two final scores
 //   { t: 'rematch' }              the other player wants a rematch
 //   { t: 'left' }                 the other player left; the room is gone
@@ -25,6 +28,14 @@ import { CLOSE, type WsConnection } from './ws.ts';
 /** No I, L, O, 0 or 1, which are easy to mix up when a code is read out or typed. */
 export const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const CODE_LENGTH = 4;
+
+/** Most blocks one attack may send (the game's ATTACK_BLOCKS tops out at 5) */
+export const MAX_ATTACK = 5;
+/**
+ * Least time between one player's attacks, ms. A cut takes 1.2 s of blinking before the next piece
+ * can land, so a real client never sends faster; this stops a modified one flooding the other.
+ */
+export const ATTACK_GAP_MS = 1000;
 
 export interface MatchOptions {
   /** Rooms open at once; past this, creating one is refused as 'busy'. */
@@ -50,6 +61,8 @@ interface Player {
   /** Final score of this round, once topped out */
   score: number | null;
   rematch: boolean;
+  /** When this player last sent an attack (Date.now()) */
+  lastAttack: number;
 }
 
 interface Room {
@@ -62,6 +75,8 @@ interface Room {
   /** When the current round started (unix ms), and whether it has been logged yet */
   startedAt: number;
   logged: boolean;
+  /** Cutting rows sends the other player blocks (the host's choice) */
+  attacks: boolean;
 }
 
 /** Normalises a typed code: upper case, without spaces or dashes. Null when it can't be one. */
@@ -142,15 +157,15 @@ export class Matches {
         const id = typeof msg.player === 'string' && PLAYER_ID.test(msg.player) ? msg.player : null;
         if (msg.t === 'create') {
           if (this.rooms.size >= this.maxRooms) return refuse('busy');
-          me = { conn, id, score: null, rematch: false };
-          room = this.open(me);
+          me = { conn, id, score: null, rematch: false, lastAttack: 0 };
+          room = this.open(me, msg.attacks !== false);
           conn.send(JSON.stringify({ t: 'room', code: room.code }));
         } else {
           const code = normalizeCode(msg.code);
           const found = code ? this.rooms.get(code) : undefined;
           if (!found) return refuse('not-found');
           if (found.players.length >= 2) return refuse('full');
-          me = { conn, id, score: null, rematch: false };
+          me = { conn, id, score: null, rematch: false, lastAttack: 0 };
           room = found;
           room.players.push(me);
           if (room.waitTimer) clearTimeout(room.waitTimer);
@@ -165,6 +180,17 @@ export class Matches {
         case 'state':
           other?.conn.send(text);
           break;
+        case 'attack': {
+          // Only in a room with attacks on, while both are still playing the round
+          const n = msg.n;
+          if (!room.attacks || !other || room.startedAt === 0 || me!.score !== null || other.score !== null) break;
+          if (!Number.isInteger(n) || (n as number) < 1 || (n as number) > MAX_ATTACK) break;
+          const at = Date.now();
+          if (at - me!.lastAttack < ATTACK_GAP_MS) break;
+          me!.lastAttack = at;
+          other.conn.send(JSON.stringify({ t: 'attack', n }));
+          break;
+        }
         case 'over': {
           const score = msg.score;
           if (!Number.isSafeInteger(score) || (score as number) < 0 || me!.score !== null || !other) break;
@@ -205,13 +231,22 @@ export class Matches {
     for (const conn of [...this.conns]) conn.close(CLOSE.goingAway, 'server restarting');
   }
 
-  private open(host: Player): Room {
+  private open(host: Player, attacks: boolean): Room {
     let code = '';
     do {
       code = '';
       for (let i = 0; i < CODE_LENGTH; i++) code += CODE_CHARS[randomInt(CODE_CHARS.length)];
     } while (this.rooms.has(code));
-    const room: Room = { code, id: randomBytes(6).toString('hex'), players: [host], round: 1, waitTimer: null, startedAt: 0, logged: false };
+    const room: Room = {
+      code,
+      id: randomBytes(6).toString('hex'),
+      players: [host],
+      round: 1,
+      waitTimer: null,
+      startedAt: 0,
+      logged: false,
+      attacks,
+    };
     room.waitTimer = setTimeout(() => host.conn.close(CLOSE.normal, 'nobody joined'), this.waitMs);
     room.waitTimer.unref();
     this.rooms.set(code, room);
@@ -225,7 +260,8 @@ export class Matches {
     for (const p of room.players) {
       p.score = null;
       p.rematch = false;
-      p.conn.send(JSON.stringify({ t: 'start', seed, round: room.round }));
+      p.lastAttack = 0;
+      p.conn.send(JSON.stringify({ t: 'start', seed, round: room.round, attacks: room.attacks }));
     }
   }
 

@@ -10,7 +10,8 @@ export type MatchError = 'not-found' | 'full' | 'busy' | 'limit' | 'offline' | '
 
 export interface MatchEvents {
   room?(code: string): void;
-  start?(seed: number, round: number): void;
+  start?(seed: number, round: number, attacks: boolean): void;
+  attack?(blocks: number): void;
   state?(msg: StateMsg): void;
   result?(you: number, them: number): void;
   rematch?(): void;
@@ -26,7 +27,7 @@ export class MatchSocket {
   private done = false;
 
   /** `player`: the browser's random id (storage.ts), so the server's match log can tell players apart */
-  constructor(hello: { t: 'create'; player: string } | { t: 'join'; code: string; player: string }) {
+  constructor(hello: { t: 'create'; player: string; attacks: boolean } | { t: 'join'; code: string; player: string }) {
     // Relative, like the leaderboard calls, so the game works from any path
     const url = new URL('api/match', location.href);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -54,7 +55,10 @@ export class MatchSocket {
           on.room?.(String(m.code));
           break;
         case 'start':
-          on.start?.(Number(m.seed), Number(m.round));
+          on.start?.(Number(m.seed), Number(m.round), m.attacks === true);
+          break;
+        case 'attack':
+          if (Number.isInteger(m.n) && (m.n as number) > 0) on.attack?.(m.n as number);
           break;
         case 'result':
           on.result?.(Number(m.you), Number(m.them));

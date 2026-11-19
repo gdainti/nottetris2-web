@@ -12,7 +12,11 @@ const BLOCK_CENTRES: [number, number][][] = [
   [[-32, 16], [0, -16], [32, -16], [0, 16]], // S
   [[-32, -16], [0, -16], [32, -16], [0, 16]], // T
   [[0, 16], [0, -16], [32, 16], [-32, -16]], // Z
+  [[0, 0]], // GARBAGE: one block, sent by the other player in Versus
 ];
+
+/** Kind of the single blocks a Versus attack drops (not one of PIECE_NAMES; never comes up as a piece) */
+export const GARBAGE = 7;
 
 function square(cx: number, cy: number): Poly {
   const h = BLOCK / 2;
@@ -28,8 +32,8 @@ export const PIECE_SHAPES: Poly[][] = BLOCK_CENTRES.map((blocks) => blocks.map((
 
 /** Centre of mass of each piece in local coordinates (used to spin the preview nicely). */
 export const PIECE_CENTRES = BLOCK_CENTRES.map((blocks) => ({
-  x: blocks.reduce((s, b) => s + b[0], 0) / 4,
-  y: blocks.reduce((s, b) => s + b[1], 0) / 4,
+  x: blocks.reduce((s, b) => s + b[0], 0) / blocks.length,
+  y: blocks.reduce((s, b) => s + b[1], 0) / blocks.length,
 }));
 
 /** Versus mode hands player 1 the mirror image of player 2's piece. */
