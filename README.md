@@ -287,7 +287,7 @@ The itch page's cover, screenshots and gameplay GIF are in `itch/screenshots/`.
 
 | Mode   | Original | Rules |
 | ------ | -------- | ----- |
-| Cut    | Game A   | Endless. A row is cut out when it holds 8.1 blocks' worth of area. Score = `ceil((n·3)^(avg^10)·20 + n²·40)` for `n` rows at average density `avg`. Level up every 10 rows (+7 px/s fall speed). A T-spin (a joke, since real ones can't happen here) is a falling T turning a full circle: +1 for its first turn, +10 for the second, +100 for each after that. |
+| Cut    | Game A   | Endless. A row is cut out when it holds 8.1 blocks' worth of area. Score = `ceil((n·3)^(avg^10)·20 + n²·40)` for `n` rows at average density `avg`. Level up every 10 rows (+7 px/s fall speed). A T-spin (a joke, since real ones can't happen here) is a falling T turning a full circle: +10 for its first turn, +100 for each after that. |
 | Versus | 2P       | Two Cut fields side by side, same piece sequence (mirrored for player 1). Both play until they top out; higher score wins. With attacks on, cuts drop blocks on the other player (see Attacks). |
 | Online | —        | Versus against a player on another device, joined by a code. Each player's own field is full size; the other player's is drawn small beside it. Same pieces for both, not mirrored. Attacks as in Versus. |
 

@@ -53,11 +53,11 @@ function eventSound(e: FieldEvent) {
 
 /**
  * The label over (or under) a field's score: normally `text`, but right after a T-spin a blinking
- * T-SPIN! +points in its place.
+ * T-SPIN! 😄 +points in its place.
  */
 function scoreLabel(ctx: CanvasRenderingContext2D, f: Field, text: string, x: number, y: number, align: CanvasTextAlign = 'left') {
   if (f.tSpinTimer >= C.TSPIN_POPUP_TIME) return label(ctx, text, x, y, align);
-  if (Math.floor(f.tSpinTimer / 0.1) % 2 === 0) value(ctx, `T-SPIN! +${f.lastTSpin}`, x, y + 1, 15, align, COLORS.accent);
+  if (Math.floor(f.tSpinTimer / 0.1) % 2 === 0) value(ctx, `T-SPIN! 😄 +${f.lastTSpin}`, x, y + 1, 15, align, COLORS.accent);
 }
 
 export class SingleGame {

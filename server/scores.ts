@@ -74,8 +74,8 @@ const isInt = (v: unknown, min: number, max: number): v is number =>
  * Checks game numbers against what the game can actually produce. This stops typos and the
  * laziest fakes, not a determined cheat: the browser is trusted with the numbers.
  *
- * - T-spins pay 1, 10, then 100 for each full turn of a falling T, so between 1 and 100 points
- *   each. A turn takes about 2 s at the top spin speed; allow 1 s.
+ * - T-spins pay 10, then 100 for each full turn of a falling T. Older clients paid 1, 10, then
+ *   100, so allow 1 to 100 points each. A turn takes about 2 s at the top spin speed; allow 1 s.
  * - Cut: the other points only come from cutting rows, so no rows means no such points. The level is lines / 10.
  *   A cut of n rows pays ceil((3n)^(avg^10)·20 + 40n²) where avg is how full the rows were
  *   (0.81–1). Even 18 rows at once stays under 1000 per row.
