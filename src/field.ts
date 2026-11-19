@@ -261,7 +261,7 @@ export class Field {
     if (!p || p.kind !== T || this.spun) return;
     if (Math.abs(p.body.getAngle()) < Math.PI * 2) return;
     this.spun = true;
-    const add = C.TSPIN_POINTS[Math.min(this.tSpins, C.TSPIN_POINTS.length - 1)];
+    const add = C.TSPIN_POINTS;
     this.tSpins++;
     this.tSpinPoints += add;
     this.score += add;
