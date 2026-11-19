@@ -14,7 +14,10 @@ export interface MatchEvents {
   start?(seed: number, round: number, attacks: boolean, pieces: PieceOrder): void;
   attack?(blocks: number): void;
   state?(msg: StateMsg): void;
-  result?(you: number, them: number): void;
+  /** The other player topped out first: this player wins and should stop */
+  won?(): void;
+  /** win: null from a server that doesn't say, where the higher score won */
+  result?(you: number, them: number, win: boolean | null): void;
   rematch?(): void;
   left?(): void;
   error?(e: MatchError): void;
@@ -64,8 +67,11 @@ export class MatchSocket {
         case 'attack':
           if (Number.isInteger(m.n) && (m.n as number) > 0) on.attack?.(m.n as number);
           break;
+        case 'won':
+          on.won?.();
+          break;
         case 'result':
-          on.result?.(Number(m.you), Number(m.them));
+          on.result?.(Number(m.you), Number(m.them), typeof m.win === 'boolean' ? m.win : null);
           break;
         case 'rematch':
           on.rematch?.();

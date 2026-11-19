@@ -13,8 +13,10 @@ export type GameEvent =
   | { type: 'start'; mode: 'cut' | 'versus' }
   | { type: 'start'; mode: 'online'; host: boolean; round: number }
   | { type: 'finish'; mode: 'cut'; score: number; lines: number; level: number; durationMs: number }
-  | { type: 'finish'; mode: 'versus'; scores: [number, number] }
-  | { type: 'finish'; mode: 'online'; host: boolean; round: number; you: number; them: number }
+  /** winner: player 1 or 2, 0 for a draw; missing from older clients, which went by score */
+  | { type: 'finish'; mode: 'versus'; scores: [number, number]; winner?: 0 | 1 | 2 }
+  /** win: whether this player won the round; missing from older clients, which went by score */
+  | { type: 'finish'; mode: 'online'; host: boolean; round: number; you: number; them: number; win?: boolean }
   | { type: 'theme'; theme: Theme }
   | { type: 'sound'; muted: boolean }
   /** Volumes in percent */
@@ -55,14 +57,17 @@ function checkEvent(b: Record<string, unknown>): GameEvent | string {
       if (b.mode === 'versus') {
         const s = b.scores;
         if (!Array.isArray(s) || s.length !== 2 || !s.every((v) => isInt(v, 0, SCORE_MAX))) return 'versus finish needs two scores';
-        return { type: 'finish', mode: 'versus', scores: [s[0], s[1]] };
+        const w = b.winner;
+        if (w !== undefined && w !== 0 && w !== 1 && w !== 2) return 'winner must be 0, 1 or 2';
+        return { type: 'finish', mode: 'versus', scores: [s[0], s[1]], ...(w === undefined ? {} : { winner: w }) };
       }
       if (b.mode === 'online') {
-        const { host, round, you, them } = b;
+        const { host, round, you, them, win } = b;
         if (typeof host !== 'boolean' || !isInt(round, 1, ROUND_MAX) || !isInt(you, 0, SCORE_MAX) || !isInt(them, 0, SCORE_MAX)) {
           return 'online finish needs host, round, you and them';
         }
-        return { type: 'finish', mode: 'online', host, round, you, them };
+        if (win !== undefined && typeof win !== 'boolean') return 'win must be true or false';
+        return { type: 'finish', mode: 'online', host, round, you, them, ...(win === undefined ? {} : { win }) };
       }
       return 'mode must be cut, versus or online';
     case 'theme':
@@ -109,10 +114,12 @@ export function eventMessage({ event: e, name, player }: Reported): string {
       }
       if (e.mode === 'versus') {
         const [a, b] = e.scores;
-        const outcome = a === b ? 'draw' : `Player ${a > b ? 1 : 2} wins`;
+        const w = e.winner ?? (a > b ? 1 : b > a ? 2 : 0);
+        const outcome = w === 0 ? 'draw' : `Player ${w} wins`;
         return `🏁 ${who}'s Versus game: ${outcome}, ${a} – ${b}`;
       }
-      return `🏁 ${who} ${e.you > e.them ? 'won' : e.you < e.them ? 'lost' : 'drew'} Online Versus round ${e.round} as ${e.host ? 'host' : 'guest'}: ${e.you} – ${e.them}`;
+      const won = e.win ?? (e.you > e.them ? true : e.you < e.them ? false : null);
+      return `🏁 ${who} ${won === true ? 'won' : won === false ? 'lost' : 'drew'} Online Versus round ${e.round} as ${e.host ? 'host' : 'guest'}: ${e.you} – ${e.them}`;
     case 'theme':
       return `🎨 ${who} switched to the ${THEME_NAMES[e.theme]} theme`;
     case 'sound':

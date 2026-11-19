@@ -9,15 +9,19 @@
 //   { t: 'join', code, player? }  first message: join a room
 //   { t: 'state', ... }           passed on to the other player as is
 //   { t: 'attack', n }            this player's cut sends the other n blocks (1 to MAX_ATTACK)
-//   { t: 'over', score, tSpins?, tSpinPoints? }  this player topped out with this score, of which
-//                                 tSpinPoints came from tSpins T-spins (for the match log only)
+//   { t: 'over', score, tSpins?, tSpinPoints? }  this player's round is over with this score, of
+//                                 which tSpinPoints came from tSpins T-spins (for the match log
+//                                 only): sent on topping out, or when told 'won'
 //   { t: 'rematch' }              after a result: play again
 // Server -> client
 //   { t: 'room', code }           the room is open, waiting for the other player
 //   { t: 'start', seed, round, attacks, pieces }  both are in: start a round with this piece seed
 //   { t: 'state', ... }           the other player's field
 //   { t: 'attack', n }            blocks from the other player
-//   { t: 'result', you, them }    both have topped out: the two final scores
+//   { t: 'won' }                  the other player topped out first: this player wins, so stop
+//                                 and report the score with 'over'
+//   { t: 'result', you, them, win }  both have reported: the two final scores, and whether this
+//                                 player won (whoever topped out first loses)
 //   { t: 'rematch' }              the other player wants a rematch
 //   { t: 'left' }                 the other player left; the room is gone
 //   { t: 'error', error }         'not-found' | 'full' | 'busy' | 'limit', then the server hangs up
@@ -82,6 +86,8 @@ interface Room {
   logged: boolean;
   /** Cutting rows sends the other player blocks (the host's choice) */
   attacks: boolean;
+  /** Who topped out first this round, and so lost it */
+  loser: Player | null;
   /** How the seed turns into pieces (the host's choice); random for clients that don't say */
   pieces: 'bag' | 'random';
 }
@@ -213,11 +219,15 @@ export class Matches {
             me!.tSpins = tSpins as number;
             me!.tSpinPoints = tSpinPoints as number;
           }
-          if (other.score !== null) {
+          if (other.score === null) {
+            // The first to top out loses, and the round ends for the other player too
+            room.loser = me;
+            other.conn.send(JSON.stringify({ t: 'won' }));
+          } else {
             this.log(room, 'finished');
             for (const p of room.players) {
               const them = room.players.find((q) => q !== p)!;
-              p.conn.send(JSON.stringify({ t: 'result', you: p.score, them: them.score }));
+              p.conn.send(JSON.stringify({ t: 'result', you: p.score, them: them.score, win: p !== room.loser }));
             }
           }
           break;
@@ -265,6 +275,7 @@ export class Matches {
       logged: false,
       attacks,
       pieces,
+      loser: null,
     };
     room.waitTimer = setTimeout(() => host.conn.close(CLOSE.normal, 'nobody joined'), this.waitMs);
     room.waitTimer.unref();
@@ -275,6 +286,7 @@ export class Matches {
   private start(room: Room) {
     room.startedAt = this.now();
     room.logged = false;
+    room.loser = null;
     const seed = randomInt(2 ** 31);
     for (const p of room.players) {
       p.score = null;
@@ -303,6 +315,7 @@ export class Matches {
         hostTSpinPoints: host?.tSpinPoints ?? null,
         guestTSpins: guest?.tSpins ?? null,
         guestTSpinPoints: guest?.tSpinPoints ?? null,
+        winner: ended !== 'finished' || !room.loser ? null : room.loser === host ? 'guest' : 'host',
         ended,
         durationMs: Math.max(0, this.now() - room.startedAt),
       });

@@ -11,8 +11,9 @@ export type GameEvent =
   | { type: 'start'; mode: 'cut' | 'versus' }
   | { type: 'start'; mode: 'online'; host: boolean; round: number }
   | { type: 'finish'; mode: 'cut'; score: number; lines: number; level: number; durationMs: number }
-  | { type: 'finish'; mode: 'versus'; scores: [number, number] }
-  | { type: 'finish'; mode: 'online'; host: boolean; round: number; you: number; them: number }
+  /** winner: player 1 or 2, 0 for a draw */
+  | { type: 'finish'; mode: 'versus'; scores: [number, number]; winner: 0 | 1 | 2 }
+  | { type: 'finish'; mode: 'online'; host: boolean; round: number; you: number; them: number; win?: boolean }
   | { type: 'theme'; theme: ThemeName }
   | { type: 'sound'; muted: boolean }
   /** Volumes in percent */

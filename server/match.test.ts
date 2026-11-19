@@ -118,13 +118,14 @@ describe('online rooms', () => {
     b.close();
   });
 
-  test('the result comes once both topped out, then a rematch starts round 2', async () => {
+  test('the first to top out loses, whatever the scores, then a rematch starts round 2', async () => {
     const { a, b, sa } = await pair();
-    a.send({ t: 'over', score: 300 });
+    a.send({ t: 'over', score: 450 });
     a.send({ t: 'rematch' }); // too early: ignored
-    b.send({ t: 'over', score: 450 });
-    assert.deepEqual(await a.next(), { t: 'result', you: 300, them: 450 });
-    assert.deepEqual(await b.next(), { t: 'result', you: 450, them: 300 });
+    assert.deepEqual(await b.next(), { t: 'won' });
+    b.send({ t: 'over', score: 300 });
+    assert.deepEqual(await a.next(), { t: 'result', you: 450, them: 300, win: false });
+    assert.deepEqual(await b.next(), { t: 'result', you: 300, them: 450, win: true });
 
     b.send({ t: 'rematch' });
     assert.deepEqual(await a.next(), { t: 'rematch' });
@@ -144,7 +145,7 @@ describe('online rooms', () => {
     a.send({ t: 'over', score: 1.5 });
     a.send({ t: 'over', score: 10 });
     b.send({ t: 'over', score: 20 });
-    assert.deepEqual(await a.next(), { t: 'result', you: 10, them: 20 });
+    assert.deepEqual(await a.next(), { t: 'result', you: 10, them: 20, win: false });
     a.close();
     b.close();
   });
@@ -244,8 +245,8 @@ describe('online rooms', () => {
     b.send({ t: 'rematch' });
     assert.equal((await a.next()).t, 'start');
     assert.deepEqual(
-      [(await b.next()).t, (await b.next()).t, (await b.next()).t],
-      ['result', 'rematch', 'start'],
+      [(await b.next()).t, (await b.next()).t, (await b.next()).t, (await b.next()).t],
+      ['won', 'result', 'rematch', 'start'],
     );
     b.send({ t: 'over', score: 80, tSpins: 1, tSpinPoints: 100 }); // more T-spin points than score
     a.close();
@@ -267,7 +268,7 @@ describe('online rooms', () => {
     b.send({ t: 'over', score: 5 });
     await a.next();
     const finished = latest();
-    assert.equal(finished.winner, 'draw');
+    assert.equal(finished.winner, 'guest'); // the same score, but the host topped out first
     assert.equal(finished.host, null);
     b.close();
     assert.deepEqual(await a.next(), { t: 'left' });
@@ -349,6 +350,7 @@ describe('online rooms', () => {
     one.b.send({ t: 'state', s: 1 });
     one.a.send({ t: 'state', s: 2 });
     assert.deepEqual(await one.a.next(), { t: 'state', s: 1 });
+    assert.deepEqual(await one.b.next(), { t: 'won' });
     assert.deepEqual(await one.b.next(), { t: 'state', s: 2 });
     one.a.close();
     one.b.close();
@@ -410,6 +412,7 @@ describe('match log', () => {
       hostTSpinPoints: null,
       guestTSpins: null,
       guestTSpinPoints: null,
+      winner: 'guest' as const,
       durationMs: 60_000,
     };
     db.addMatch({ ...base, room: 'r1', round: 1, ended: 'finished' }, at);

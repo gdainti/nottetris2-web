@@ -209,8 +209,8 @@ function showTitle() {
 function modeInfo(mode: GameMode): string {
   const text: Record<GameMode, string> = {
     cut: 'Endless. A row is sliced out when it holds 8.1 blocks’ worth of area, cutting right through the pieces. Tighter rows score more. Every 10 rows the pieces fall faster.',
-    versus: 'Two players, one keyboard (or two gamepads). Same pieces, mirrored for player 1, and rows are cut as in Cut. Once both have topped out, the higher score wins.',
-    online: 'Two players, each on their own device. Create a game and tell the other player its code, or join theirs with the code they give you. Same pieces for both; once both have topped out, the higher score wins. Pieces and Attacks: the setting of whoever creates the game counts.',
+    versus: 'Two players, one keyboard (or two gamepads). Same pieces, mirrored for player 1, and rows are cut as in Cut. Whoever tops out first loses, and the game ends for both.',
+    online: 'Two players, each on their own device. Create a game and tell the other player its code, or join theirs with the code they give you. Same pieces for both; whoever tops out first loses, and the round ends for both. Pieces and Attacks: the setting of whoever creates the game counts.',
   };
   let out = `<p class="info">${text[mode]}</p>`;
   out += `<p class="info">${
@@ -704,7 +704,7 @@ function showVersusResults() {
   state = 'results';
   updateTouch();
   const [a, b] = g.fields.map((f) => f.score);
-  report({ type: 'finish', mode: 'versus', scores: [a, b] });
+  report({ type: 'finish', mode: 'versus', scores: [a, b], winner: g.winner === 2 ? 0 : g.winner === 0 ? 1 : 2 });
   menu.show({
     title: g.winner === 2 ? 'Draw!' : `Player ${g.winner + 1} wins!`,
     className: 'compact',
@@ -776,7 +776,7 @@ function showOnline(note = '') {
     ],
     html: () =>
       (note ? `<p class="rankline warn">${esc(note)}</p>` : '') +
-      '<p class="info">Create a game and tell the other player its code, or type in the code they give you. You both get the same pieces. Once both have topped out, the higher score wins.</p>',
+      '<p class="info">Create a game and tell the other player its code, or type in the code they give you. You both get the same pieces. Whoever tops out first loses.</p>',
     onBack: showModeSelect,
     backButton: true,
   });
@@ -893,7 +893,8 @@ function startOnline(seed: number, round: number, attacks: boolean, pieces: Piec
   m.socket.on = {
     state: (s) => g.receive(s),
     attack: (blocks) => g.receiveAttack(blocks),
-    result: (you, them) => g.finish(you, them),
+    won: () => g.won(),
+    result: (you, them, win) => g.finish(you, them, win),
     rematch: () => {
       m.theyRematch = true;
       if (state === 'results') menu.refresh();
@@ -927,9 +928,9 @@ function showOnlineResults(first = true) {
   if (!m || !g.result) return;
   state = 'results';
   updateTouch();
-  const { you, them } = g.result;
-  if (first && you > them) audio.play('highscore');
-  if (first) report({ type: 'finish', mode: 'online', host: m.host, round: m.round, you, them });
+  const { you, them, win } = g.result;
+  if (first && win) audio.play('highscore');
+  if (first) report({ type: 'finish', mode: 'online', host: m.host, round: m.round, you, them, ...(win === null ? {} : { win }) });
   const status = () => {
     if (m.gone) return esc(m.gone);
     if (m.rematch) return 'Waiting for the other player…';
@@ -937,7 +938,7 @@ function showOnlineResults(first = true) {
     return '&nbsp;';
   };
   menu.show({
-    title: you > them ? 'You win!' : them > you ? 'You lose' : 'Draw!',
+    title: win ? 'You win!' : win === false ? 'You lose' : 'Draw!',
     className: 'compact',
     htmlFirst: true,
     html: () =>

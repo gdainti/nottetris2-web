@@ -226,13 +226,18 @@ export class VersusGame {
       return;
     }
 
-    this.fields[0].update(dt, this.phase === 'playing' ? versusControls(0) : NO_CONTROLS);
-    this.fields[1].update(dt, this.phase === 'playing' ? versusControls(1) : NO_CONTROLS);
+    // Once the round is decided, the winner's field stops where it is until the fall-out
+    for (const i of [0, 1] as const) {
+      const f = this.fields[i];
+      if (this.phase === 'ending' && f.state !== 'toppedOut') continue;
+      f.update(dt, this.phase === 'playing' ? versusControls(i) : NO_CONTROLS);
+    }
 
     if (this.phase === 'playing') {
-      if (this.fields.every((f) => f.state === 'toppedOut')) {
-        const [a, b] = this.fields.map((f) => f.score);
-        const w = a > b ? 0 : b > a ? 1 : 2;
+      // Whoever tops out first loses, whatever the scores; both in the same step is a draw
+      const out = this.fields.map((f) => f.state === 'toppedOut');
+      if (out[0] || out[1]) {
+        const w = out[0] && out[1] ? 2 : out[0] ? 1 : 0;
         this.winner = w;
         if (w !== 2) VersusGame.wins[w] = (VersusGame.wins[w] + 1) % 100;
         this.phase = 'ending';
@@ -258,7 +263,7 @@ export class VersusGame {
     drawBackground(ctx, VERSUS_W, H);
     this.fields.forEach((f, i) => {
       const at = VersusGame.AT[i];
-      const out = f.state === 'toppedOut' && this.phase === 'playing';
+      const out = f.state === 'toppedOut' && (this.phase === 'playing' || this.phase === 'ending');
       drawField(ctx, f, at, { hidePieces: this.paused, dim: out ? 0.55 : 0, meter: i === 0 ? 'left' : 'right', alpha });
       if (out) centreText(ctx, 'TOPPED OUT', at.x + f.width / 2, at.y + C.FIELD_HEIGHT / 2, 26, COLORS.danger);
       if (this.phase === 'countdown') {
@@ -299,7 +304,8 @@ type OnlinePhase = 'countdown' | 'playing' | 'waiting' | 'ending' | 'fallout' | 
 /**
  * Versus against a player on another device. Only this player's field runs here; the other one is
  * drawn from the state messages their browser sends (RemoteField), small, in the side panel. Both
- * fields get the same pieces from the room's seed. The server sends the result once both topped out.
+ * fields get the same pieces from the room's seed. Whoever tops out first loses: the server then
+ * tells the other player ('won'), whose field stops where it is, and sends the result to both.
  *
  * Both games run at the same time: there is no pause. The page keeps the game going while it's in
  * the background and makes up any time it missed (main.ts), with `inputOff` set meanwhile.
@@ -315,7 +321,9 @@ export class OnlineGame {
   paused = false;
   /** Ignore this player's controls: a menu is open over the game, or it is catching up on missed time */
   inputOff = false;
-  result: { you: number; them: number } | null = null;
+  result: { you: number; them: number; win: boolean | null } | null = null;
+  /** This round's score has gone to the server (on topping out, or on being told we won) */
+  private reported = false;
   private countdown = 3;
   private lastBeep = 4;
   private endTimer = 0;
@@ -367,12 +375,21 @@ export class OnlineGame {
     if (this.phase === 'playing') this.field.receiveAttack(blocks);
   }
 
-  /** Both players have topped out: the final scores, from the server. */
-  finish(you: number, them: number) {
+  /** The other player topped out first: this field stops where it is and its score goes in. */
+  won() {
+    if (this.phase !== 'playing' || this.reported) return;
+    this.phase = 'waiting';
+    this.report();
+  }
+
+  /** The round is decided: the final scores and whether this player won, from the server. */
+  finish(you: number, them: number, win: boolean | null) {
     if (this.result) return;
-    this.result = { you, them };
-    if (you > them) this.wins[0]++;
-    else if (them > you) this.wins[1]++;
+    // A server from before the first-to-top-out rule doesn't say, and the higher score won there
+    const w = win ?? (you > them ? true : them > you ? false : null);
+    this.result = { you, them, win: w };
+    if (w === true) this.wins[0]++;
+    else if (w === false) this.wins[1]++;
     this.phase = 'ending';
     this.endTimer = 0;
     audio.stopMusic();
@@ -381,11 +398,22 @@ export class OnlineGame {
 
   private onEvent(e: FieldEvent) {
     if (e === 'topout') {
+      if (this.reported) return;
       audio.play('back');
       this.phase = 'waiting';
-      this.send({ t: 'over', score: this.field.score, tSpins: this.field.tSpins, tSpinPoints: this.field.tSpinPoints });
+      this.report();
     } else if (e === 'fallout') audio.play('fallout');
     else eventSound(e);
+  }
+
+  private report() {
+    this.reported = true;
+    this.send({ t: 'over', score: this.field.score, tSpins: this.field.tSpins, tSpinPoints: this.field.tSpinPoints });
+  }
+
+  /** Won (the other player topped out first): this field stays where it is until the fall-out */
+  private get frozen() {
+    return (this.phase === 'waiting' || this.phase === 'ending') && this.field.state !== 'toppedOut';
   }
 
   update(dt: number) {
@@ -407,6 +435,7 @@ export class OnlineGame {
     }
 
     this.time += dt;
+    if (this.frozen) return;
     this.field.update(dt, this.phase === 'playing' && !this.inputOff ? singleControls() : NO_CONTROLS);
 
     if (this.phase === 'ending') {
@@ -442,7 +471,7 @@ export class OnlineGame {
     const r = this.remote;
     drawBackground(ctx, SINGLE_W, H);
 
-    const waiting = this.phase === 'waiting';
+    const waiting = this.phase === 'waiting' && !this.frozen;
     drawField(ctx, f, SINGLE_FIELD, { dim: waiting ? 0.55 : 0, alpha });
     const fx = SINGLE_FIELD.x + f.width / 2;
     const fy = SINGLE_FIELD.y + C.FIELD_HEIGHT / 2;
