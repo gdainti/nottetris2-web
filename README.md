@@ -4,6 +4,8 @@ A browser port of the gameplay from [Not Tetris 2](https://github.com/Stabyourse
 by Maurice Guégan. Pieces are real rigid bodies: you push and spin them with forces, they
 tumble and stack, and a row is sliced straight through the pieces once it holds enough area.
 
+**Play it in the browser: [slicefall.gdainti.com](https://slicefall.gdainti.com/)**
+
 The rules and tuning are carried over from the original Lua source; the presentation (name,
 visuals, sound, music) is new. No assets from the original are used.
 
