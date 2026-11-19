@@ -10,10 +10,68 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
     <meta name="theme-color" content="#0d1020" />
-    <title>Slicefall</title>
+    <title>Slicefall: Not Tetris 2 in your browser, physics falling blocks</title>
+    <meta name="description" content="Play Not Tetris 2-style physics falling blocks in your browser, free with no download. Pieces tumble and stack like real objects, and full rows are sliced straight through. Endless mode, 2-player versus and online, leaderboards, works on mobile." />
+    <link rel="canonical" href="https://slicefall.gdainti.com/" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Slicefall" />
+    <meta property="og:url" content="https://slicefall.gdainti.com/" />
+    <meta property="og:title" content="Slicefall: Not Tetris 2 in your browser" />
+    <meta property="og:description" content="Physics falling blocks: pieces tumble and stack like real objects, and full rows are sliced straight through. Free, no download, single player, versus and online." />
+    <meta property="og:image" content="https://slicefall.gdainti.com/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Slicefall logo over tilted falling blocks: falling blocks, real physics, sliced rows" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Slicefall: Not Tetris 2 in your browser" />
+    <meta name="twitter:description" content="Physics falling blocks: pieces tumble and stack like real objects, and full rows are sliced straight through. Free, in the browser." />
+    <meta name="twitter:image" content="https://slicefall.gdainti.com/og-image.png" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": ["VideoGame", "WebApplication"],
+        "name": "Slicefall",
+        "alternateName": ["Not Tetris 2 web", "Not Tetris 2 online", "Not Tetris 2 browser"],
+        "url": "https://slicefall.gdainti.com/",
+        "image": "https://slicefall.gdainti.com/og-image.png",
+        "description": "A browser port of the Not Tetris 2 gameplay: falling blocks with real physics, where rows are sliced through the pieces once they hold enough area.",
+        "genre": ["Puzzle", "Physics", "Falling blocks"],
+        "gamePlatform": ["Web browser", "Desktop", "Mobile"],
+        "applicationCategory": "GameApplication",
+        "operatingSystem": "Any",
+        "playMode": ["SinglePlayer", "MultiPlayer"],
+        "isBasedOn": {
+          "@type": "VideoGame",
+          "name": "Not Tetris 2",
+          "author": { "@type": "Person", "name": "Maurice Guégan" },
+          "url": "https://github.com/Stabyourself/nottetris2"
+        },
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      }
+    </script>
   </head>
   <body>
+    <!-- The game draws to a canvas, so this is the page's only text for search engines and screen readers. -->
+    <div class="sr-only">
+      <h1>Slicefall: Not Tetris 2 gameplay in your browser</h1>
+      <p>
+        Slicefall is a free web port of the gameplay from Not Tetris 2 by Maurice Guégan. Falling blocks are
+        real rigid bodies: you push and spin them, they tumble and stack, and once a row holds enough area it
+        is sliced straight through the pieces. No download or install.
+      </p>
+      <p>
+        Modes: Cut (endless, with weekly and all-time leaderboards), Versus (two players on one keyboard or two
+        gamepads) and Online (two players on their own devices, joined by a code). Plays with keyboard, gamepad
+        or touch controls on phones and tablets.
+      </p>
+      <p>
+        Not Tetris 2 is a physics take on Tetris, created by Alexey Pajitnov in 1984. Tetris is a trademark of
+        The Tetris Company; this game is not affiliated with or endorsed by it.
+      </p>
+    </div>
     <div id="app">
       <div id="stage">
         <canvas id="game" aria-label="Game field"></canvas>
