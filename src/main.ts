@@ -587,7 +587,7 @@ function onSingleOver() {
   const skip = () => send(null);
 
   menu.show({
-    title: personalBest ? 'New high score!' : 'Game over',
+    title: personalBest ? 'New high score!' : 'Game Over',
     className: 'compact',
     htmlFirst: true,
     html: () =>
@@ -623,7 +623,7 @@ function showGameOver(g: SingleGame, request: Promise<Boards | Submitted>, local
   const view = boardView(localRank);
   if (anon) view.me = null;
   menu.show({
-    title: 'Game over',
+    title: 'Game Over',
     className: 'results tight',
     htmlFirst: true,
     html: () => stats + boardHtml(view),
@@ -906,7 +906,7 @@ function showMatchOver(text: string) {
   state = 'results';
   updateTouch();
   menu.show({
-    title: 'Game over',
+    title: 'Game Over',
     className: 'compact',
     htmlFirst: true,
     html: () => `<p class="info center">${esc(text)}</p><p class="info center">Wins ${wins[0]} – ${wins[1]}</p>`,
