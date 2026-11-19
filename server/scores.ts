@@ -49,7 +49,7 @@ export interface Submission extends GameStats {
 }
 
 /** The shared name the game sends when the player leaves it blank (src/api.ts). Not tied to ids. */
-export const ANON = 'ANON';
+export const ANON = 'INCOGNITO';
 
 type Checked<T> = { ok: true; value: T } | { ok: false; error: string };
 
