@@ -375,7 +375,7 @@ describe('online rooms', () => {
 
   test('the page allows a socket back to its own host', async () => {
     const r = await fetch(`http://127.0.0.1:${port}/healthz`);
-    assert.match(r.headers.get('content-security-policy') ?? '', new RegExp(`connect-src 'self' wss://127\\.0\\.0\\.1:${port} ws://127\\.0\\.0\\.1:${port};`));
+    assert.match(r.headers.get('content-security-policy') ?? '', new RegExp(`connect-src 'self' wss://127\\.0\\.0\\.1:${port} ws://127\\.0\\.0\\.1:${port}[ ;]`));
   });
 });
 

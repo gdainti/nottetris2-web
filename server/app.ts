@@ -48,12 +48,18 @@ const TYPES: Record<string, string> = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.txt': 'text/plain; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
   '.webmanifest': 'application/manifest+json',
 };
 
 // Only itch.io may frame the game: its page (*.itch.io) holds a frame from *.itch.zone, which holds
 // itch/index.html's iframe of this site. frame-ancestors is checked against every one of them.
 const FRAME_ANCESTORS = 'https://itch.io https://*.itch.io https://*.itch.zone';
+
+// Google Tag Manager (public/analytics.js) and the Google Analytics it sends to, as Google lists them
+// for a Content-Security-Policy.
+const GOOGLE_TAG = 'https://*.googletagmanager.com';
+const GOOGLE_ANALYTICS = 'https://*.google-analytics.com https://*.analytics.google.com';
 
 /**
  * The online games' WebSocket goes back to the same host. CSP 3 counts that as 'self', but older
@@ -64,7 +70,7 @@ function securityHeaders(host: string | undefined): Record<string, string> {
   return {
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
-    'Content-Security-Policy': `default-src 'self'; connect-src 'self'${socket}; img-src 'self' data:; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors ${FRAME_ANCESTORS}`,
+    'Content-Security-Policy': `default-src 'self'; script-src 'self' ${GOOGLE_TAG}; connect-src 'self'${socket} ${GOOGLE_TAG} ${GOOGLE_ANALYTICS}; img-src 'self' data: ${GOOGLE_TAG} ${GOOGLE_ANALYTICS}; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors ${FRAME_ANCESTORS}`,
   };
 }
 
