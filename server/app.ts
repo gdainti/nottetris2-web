@@ -56,6 +56,11 @@ const TYPES: Record<string, string> = {
 // itch/index.html's iframe of this site. frame-ancestors is checked against every one of them.
 const FRAME_ANCESTORS = 'https://itch.io https://*.itch.io https://*.itch.zone';
 
+// Google Tag Manager (public/analytics.js) and the Google Analytics it sends to, as Google lists them
+// for a Content-Security-Policy.
+const GOOGLE_TAG = 'https://*.googletagmanager.com';
+const GOOGLE_ANALYTICS = 'https://*.google-analytics.com https://*.analytics.google.com';
+
 /**
  * The online games' WebSocket goes back to the same host. CSP 3 counts that as 'self', but older
  * Safari did not, so the host is named too. A Host header that isn't a plain host name is left out.
@@ -65,7 +70,7 @@ function securityHeaders(host: string | undefined): Record<string, string> {
   return {
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
-    'Content-Security-Policy': `default-src 'self'; connect-src 'self'${socket}; img-src 'self' data:; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors ${FRAME_ANCESTORS}`,
+    'Content-Security-Policy': `default-src 'self'; script-src 'self' ${GOOGLE_TAG}; connect-src 'self'${socket} ${GOOGLE_TAG} ${GOOGLE_ANALYTICS}; img-src 'self' data: ${GOOGLE_TAG} ${GOOGLE_ANALYTICS}; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors ${FRAME_ANCESTORS}`,
   };
 }
 
