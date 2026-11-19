@@ -183,34 +183,39 @@ body {
  * measuring every letter: each piece it leaves is at least a fifth of its letter in Avenir Next,
  * Helvetica Neue and the system font, so no letter keeps a sliver (62%/38% left one on the S).
  */
-/* Like the favicon: the halves slide apart along the cut, top to the left, bottom to the right. */
+/*
+ * The two halves sway left and right in opposite directions, sliding along the cut and back, centred
+ * on the lined-up position: a sine-like swing between the two ends (translate, so it adds to the
+ * bottom half's drop in transform). The top runs the same swing reversed, and the negative delay
+ * starts both at the middle, so the logo first appears lined up.
+ */
 .logo-half.top {
   clip-path: polygon(-5% -20%, 105% -20%, 105% 38%, -5% 58%);
-  transform: translateX(-0.08em);
-  /* the cut-off top keeps sliding a little left and right on the bottom half */
-  animation: logo-slide 2.6s ease-in-out infinite alternate;
-}
-
-@keyframes logo-slide {
-  from {
-    transform: translateX(-0.08em);
-  }
-  to {
-    transform: translateX(0.05em);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .logo-half.top {
-    animation: none;
-  }
+  animation: logo-sway 2.6s ease-in-out -1.3s infinite alternate-reverse;
 }
 
 .logo-half.bottom {
   position: absolute;
   inset: 0;
   clip-path: polygon(-5% 64%, 105% 44%, 105% 120%, -5% 120%);
-  transform: translate(0.08em, 0.03em);
+  transform: translateY(0.03em);
+  animation: logo-sway 2.6s ease-in-out -1.3s infinite alternate;
+}
+
+@keyframes logo-sway {
+  from {
+    translate: -0.05em 0;
+  }
+  to {
+    translate: 0.05em 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logo-half.top,
+  .logo-half.bottom {
+    animation: none;
+  }
 }
 
 .menu .sub {
