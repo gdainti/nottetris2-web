@@ -383,7 +383,7 @@ export class OnlineGame {
     if (e === 'topout') {
       audio.play('back');
       this.phase = 'waiting';
-      this.send({ t: 'over', score: this.field.score });
+      this.send({ t: 'over', score: this.field.score, tSpins: this.field.tSpins, tSpinPoints: this.field.tSpinPoints });
     } else if (e === 'fallout') audio.play('fallout');
     else eventSound(e);
   }

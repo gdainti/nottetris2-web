@@ -221,10 +221,16 @@ describe('online rooms', () => {
 
   test('a finished round goes in the match log, then a rematch and a round left half way', async () => {
     const { a, b } = await pair([HOST, GUEST]);
-    a.send({ t: 'over', score: 300 });
-    b.send({ t: 'over', score: 450 });
+    a.send({ t: 'over', score: 300, tSpins: 3, tSpinPoints: 111 });
+    b.send({ t: 'over', score: 450 }); // an older client: no T-spins
     await a.next();
     const first = latest();
+    assert.equal(first.host_t_spins, 3);
+    assert.equal(first.guest_t_spins, null);
+    assert.deepEqual(
+      { ...db.sql.prepare('SELECT host_t_spin_points, guest_t_spin_points FROM match WHERE id = ?').get(first.id as number) },
+      { host_t_spin_points: 111, guest_t_spin_points: null },
+    );
     assert.equal(first.round, 1);
     assert.equal(first.host, HOST);
     assert.equal(first.guest, GUEST);
@@ -241,7 +247,7 @@ describe('online rooms', () => {
       [(await b.next()).t, (await b.next()).t, (await b.next()).t],
       ['result', 'rematch', 'start'],
     );
-    b.send({ t: 'over', score: 80 });
+    b.send({ t: 'over', score: 80, tSpins: 1, tSpinPoints: 100 }); // more T-spin points than score
     a.close();
     assert.deepEqual(await b.next(), { t: 'left' });
     const second = latest();
@@ -250,6 +256,8 @@ describe('online rooms', () => {
     assert.equal(second.ended, 'host-left');
     assert.equal(second.host_score, null);
     assert.equal(second.guest_score, 80);
+    assert.equal(second.host_t_spins, null);
+    assert.equal(second.guest_t_spins, null); // 100 T-spin points don't fit in 80: not logged
     assert.equal(second.winner, null);
   });
 
@@ -393,7 +401,17 @@ describe('match log', () => {
   test('totals: rounds, how they ended, rooms, rematches and devices', () => {
     const db = new ScoreDb(':memory:');
     const at = new Date('2026-11-18T12:00:00Z');
-    const base = { host: 'a'.repeat(32), guest: 'b'.repeat(32), hostScore: 10, guestScore: 20, durationMs: 60_000 };
+    const base = {
+      host: 'a'.repeat(32),
+      guest: 'b'.repeat(32),
+      hostScore: 10,
+      guestScore: 20,
+      hostTSpins: null,
+      hostTSpinPoints: null,
+      guestTSpins: null,
+      guestTSpinPoints: null,
+      durationMs: 60_000,
+    };
     db.addMatch({ ...base, room: 'r1', round: 1, ended: 'finished' }, at);
     db.addMatch({ ...base, room: 'r1', round: 2, ended: 'finished' }, at);
     db.addMatch({ ...base, room: 'r2', round: 1, guest: 'c'.repeat(32), guestScore: null, ended: 'guest-left' }, at);
