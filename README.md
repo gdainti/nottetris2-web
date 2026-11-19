@@ -157,7 +157,8 @@ is fine between friends, and it's why there is no Versus leaderboard.
 Every round the server starts goes in a `match` table when it ends, for play statistics: a random id
 for the room (codes are reused, so they can't group rounds), the round number in that room (2 and up
 are rematches), both browsers' player ids (sent with create and join; the host created the room, the
-guest joined), both final scores, the winner, how it ended (`finished` once both topped out,
+guest joined), both final scores with each player's T-spins and their points (as their browser
+reports them with the score), the winner, how it ended (`finished` once both topped out,
 `host-left` or `guest-left` when someone left or dropped first, with the score of anyone who had
 already topped out, or `restart` when the server stopped) and how long the round took by the
 server's clock. A room nobody joined, and leaving after a finished round, log nothing. See

@@ -9,7 +9,8 @@
 //   { t: 'join', code, player? }  first message: join a room
 //   { t: 'state', ... }           passed on to the other player as is
 //   { t: 'attack', n }            this player's cut sends the other n blocks (1 to MAX_ATTACK)
-//   { t: 'over', score }          this player topped out with this score
+//   { t: 'over', score, tSpins?, tSpinPoints? }  this player topped out with this score, of which
+//                                 tSpinPoints came from tSpins T-spins (for the match log only)
 //   { t: 'rematch' }              after a result: play again
 // Server -> client
 //   { t: 'room', code }           the room is open, waiting for the other player
@@ -61,6 +62,9 @@ interface Player {
   id: string | null;
   /** Final score of this round, once topped out */
   score: number | null;
+  /** T-spins and their points this round, as reported with the score; null if not (or not believably) */
+  tSpins: number | null;
+  tSpinPoints: number | null;
   rematch: boolean;
   /** When this player last sent an attack (Date.now()) */
   lastAttack: number;
@@ -160,7 +164,7 @@ export class Matches {
         const id = typeof msg.player === 'string' && PLAYER_ID.test(msg.player) ? msg.player : null;
         if (msg.t === 'create') {
           if (this.rooms.size >= this.maxRooms) return refuse('busy');
-          me = { conn, id, score: null, rematch: false, lastAttack: 0 };
+          me = { conn, id, score: null, tSpins: null, tSpinPoints: null, rematch: false, lastAttack: 0 };
           room = this.open(me, msg.attacks !== false, msg.pieces === 'bag' ? 'bag' : 'random');
           conn.send(JSON.stringify({ t: 'room', code: room.code }));
         } else {
@@ -168,7 +172,7 @@ export class Matches {
           const found = code ? this.rooms.get(code) : undefined;
           if (!found) return refuse('not-found');
           if (found.players.length >= 2) return refuse('full');
-          me = { conn, id, score: null, rematch: false, lastAttack: 0 };
+          me = { conn, id, score: null, tSpins: null, tSpinPoints: null, rematch: false, lastAttack: 0 };
           room = found;
           room.players.push(me);
           if (room.waitTimer) clearTimeout(room.waitTimer);
@@ -198,6 +202,17 @@ export class Matches {
           const score = msg.score;
           if (!Number.isSafeInteger(score) || (score as number) < 0 || me!.score !== null || !other) break;
           me!.score = score as number;
+          // Each T-spin pays 1 to 100 points, all part of the score; anything else isn't logged
+          const { tSpins, tSpinPoints } = msg;
+          if (
+            Number.isSafeInteger(tSpins) &&
+            Number.isSafeInteger(tSpinPoints) &&
+            (tSpinPoints as number) >= (tSpins as number) &&
+            (tSpinPoints as number) <= Math.min(score as number, (tSpins as number) * 100)
+          ) {
+            me!.tSpins = tSpins as number;
+            me!.tSpinPoints = tSpinPoints as number;
+          }
           if (other.score !== null) {
             this.log(room, 'finished');
             for (const p of room.players) {
@@ -263,6 +278,8 @@ export class Matches {
     const seed = randomInt(2 ** 31);
     for (const p of room.players) {
       p.score = null;
+      p.tSpins = null;
+      p.tSpinPoints = null;
       p.rematch = false;
       p.lastAttack = 0;
       p.conn.send(JSON.stringify({ t: 'start', seed, round: room.round, attacks: room.attacks, pieces: room.pieces }));
@@ -282,6 +299,10 @@ export class Matches {
         guest: guest?.id ?? null,
         hostScore: host?.score ?? null,
         guestScore: guest?.score ?? null,
+        hostTSpins: host?.tSpins ?? null,
+        hostTSpinPoints: host?.tSpinPoints ?? null,
+        guestTSpins: guest?.tSpins ?? null,
+        guestTSpinPoints: guest?.tSpinPoints ?? null,
         ended,
         durationMs: Math.max(0, this.now() - room.startedAt),
       });

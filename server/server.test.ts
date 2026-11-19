@@ -412,6 +412,10 @@ test('migrating renames the old shared ANON scores and games to INCOGNITO', () =
                   VALUES ('cut', 'ANON', 500, 4, 0, 12, 2, 2, 60000, 2), ('cut', NULL, 100, 1, 0, 4, 1, 1, 9000, 3);
                   ALTER TABLE game DROP COLUMN t_spins;
                   ALTER TABLE game DROP COLUMN t_spin_points;
+                  ALTER TABLE match DROP COLUMN host_t_spins;
+                  ALTER TABLE match DROP COLUMN host_t_spin_points;
+                  ALTER TABLE match DROP COLUMN guest_t_spins;
+                  ALTER TABLE match DROP COLUMN guest_t_spin_points;
                   PRAGMA user_version = 5;`);
     old.close();
 
