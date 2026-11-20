@@ -45,11 +45,16 @@ are one player. Each board lists every player's best score:
 - **All time**
 
 The server keeps the scores in SQLite (`data/slicefall.db`, `/data/slicefall.db` in Docker), using
-Node's built-in `node:sqlite`, so it has no npm dependencies at all. It checks that a score is one
-the game could produce (points per row, level and pieces must match the rows, a minimum time per
-piece) and allows 30 submissions per IP per 10 minutes. That stops typos
-and casual fakes, but the browser reports the score, so a determined cheat can still post a
-believable one. Remove those by hand:
+Node's built-in `node:sqlite`, so it has no npm dependencies at all. Only games the server saw
+start can be scored. Each Cut game asks for a session as it begins (`POST /api/games/start`), and at
+game over the game is logged against it. The session must be unused and less than a day old, and the game can't report more play than
+the server's clock says has passed since the session began (plus 10 s for the start request to
+arrive). A score then sends only a name and that session, and gets the numbers of the game the
+server logged, once. The server also checks that a game is one the field could produce (points per
+row, level and pieces must match the rows, a minimum time per piece) and allows 90 sessions, 60 games and
+30 scores per IP per 10 minutes. A fake now takes as long as the game it claims, but the browser
+still reports the numbers, so a determined cheat can still post a believable one. Remove those by
+hand:
 
 Every finished Cut game is also logged in a `game` table, whether the player submits the score or
 skips it (and games that scored nothing, where no name is asked). Each row keeps the score, lines,
@@ -80,8 +85,9 @@ docker exec slicefall node server/admin.ts delete-name ANN    # all of a player'
 | Endpoint                                  | Returns |
 | ----------------------------------------- | ------- |
 | `GET /api/leaderboard?mode=cut`           | `{ weekStart, week: [...], allTime: [...] }`, top 10 each |
-| `POST /api/games`                         | Takes `{ mode, score, lines, level, pieces, cuts, bestCut, durationMs, tSpins?, tSpinPoints?, player? }` at every game over; returns `{ id }`. `player` is the browser's random id, 32 lowercase hex digits |
-| `POST /api/scores`                        | Takes `{ mode, name, score, lines, level, pieces, durationMs, tSpins?, tSpinPoints?, gameId?, player? }`; returns the boards plus `weekRank` and `allTimeRank`. With `gameId`, that logged game gets the name (if it has the same `player`); with `player`, the name and id are recorded as a pair |
+| `POST /api/games/start`                   | Takes `{ player? }` as a Cut game begins; returns `{ session }`, 32 random hex digits. `player` is the browser's random id, 32 lowercase hex digits |
+| `POST /api/games`                         | Takes `{ mode, session, score, lines, level, pieces, cuts, bestCut, durationMs, tSpins?, tSpinPoints?, player? }` at every game over; returns `{ id }`. The session is used up, and must be from the same `player` |
+| `POST /api/scores`                        | Takes `{ mode, name, session }` for a logged game that scored; returns the boards plus `weekRank` and `allTimeRank`. The score has that game's numbers, and the game gets the name; with the game's `player`, the name and id are recorded as a pair |
 | `GET /healthz`                            | `ok` when the database answers |
 | `GET /api/match` (WebSocket)              | Online Versus rooms; see below |
 
@@ -124,9 +130,10 @@ the server picks for each round (`seededKinds` in `src/pieces.ts`, integer maths
 browser makes the same sequence), dealt in the piece order of whoever created the game (`pieces`
 in `create`, passed to both in each round's `start`; random when a client doesn't say).
 
-The server (`server/match.ts`) only pairs the two connections and passes their messages on. Each
-player reports a final score when they top out; once both have, the server sends both scores to
-both, so they can't disagree on who won. If either player leaves or drops, the room closes and the
+The server (`server/match.ts`) only pairs the two connections and passes their messages on. Whoever
+tops out first loses: they report their score, the server tells the other player they won
+(`won`), and that player's field stops where it is and reports its score too. The server then
+sends both scores and who won to both, so they can't disagree. If either player leaves or drops, the room closes and the
 other is told.
 
 There is no pause online: both games run at the same time. The Pause button becomes Leave, and
@@ -290,7 +297,7 @@ The itch page's cover, screenshots and gameplay GIF are in `itch/screenshots/`.
 | Mode   | Original | Rules |
 | ------ | -------- | ----- |
 | Cut    | Game A   | Endless. A row is cut out when it holds 8.1 blocks' worth of area. Score = `ceil((n·3)^(avg^10)·20 + n²·40)` for `n` rows at average density `avg`. Level up every 10 rows (+7 px/s fall speed). A T-spin (a joke, since real ones can't happen here) is a falling T turning a full circle, once per piece: +100. |
-| Versus | 2P       | Two Cut fields side by side, same piece sequence (mirrored for player 1). Both play until they top out; higher score wins. With attacks on, cuts drop blocks on the other player (see Attacks). |
+| Versus | 2P       | Two Cut fields side by side, same piece sequence (mirrored for player 1). Whoever tops out first loses, and the game ends for both (both in the same moment is a draw). With attacks on, cuts drop blocks on the other player (see Attacks). |
 | Online | —        | Versus against a player on another device, joined by a code. Each player's own field is full size; the other player's is drawn small beside it. Same pieces for both, not mirrored. Attacks as in Versus. |
 
 The **Pieces** setting on the Game type screen picks how the next piece is chosen, in every mode:

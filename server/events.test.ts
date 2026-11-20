@@ -35,9 +35,33 @@ describe('event messages', () => {
     );
     assert.equal(line({ type: 'finish', mode: 'versus', scores: [300, 900], name: 'ANN' }), "🏁 ANN's Versus game: Player 2 wins, 300 – 900");
     assert.equal(line({ type: 'finish', mode: 'versus', scores: [5, 5], name: 'ANN' }), "🏁 ANN's Versus game: draw, 5 – 5");
+    assert.equal(line({ type: 'finish', mode: 'versus', scores: [300, 900], winner: 1, name: 'ANN' }), "🏁 ANN's Versus game: Player 1 wins, 300 – 900");
     assert.equal(
       line({ type: 'finish', mode: 'online', host: true, round: 1, you: 800, them: 200, name: 'ANN' }),
       '🏁 ANN won Online Versus round 1 as host: 800 – 200',
+    );
+    assert.equal(
+      line({ type: 'finish', mode: 'online', host: false, round: 2, you: 800, them: 200, win: false, name: 'ANN' }),
+      '🏁 ANN lost Online Versus round 2 as guest: 800 – 200',
+    );
+  });
+
+  test('games left mid-way', () => {
+    assert.equal(
+      line({ type: 'leave', via: 'page', mode: 'cut', score: 1234, lines: 12, level: 1, durationMs: 225_400, name: 'ANN' }),
+      '🚪 ANN closed the page during a Cut game: 1234 points, 12 lines, level 1, 3:45',
+    );
+    assert.equal(
+      line({ type: 'leave', via: 'menu', mode: 'versus', scores: [300, 900], name: 'ANN' }),
+      '🚪 ANN quit to the menu from a Versus game: 300 – 900',
+    );
+    assert.equal(
+      line({ type: 'leave', via: 'restart', mode: 'cut', score: 50, lines: 0, level: 0, durationMs: 9_000, name: 'ANN' }),
+      '🚪 ANN restarted, leaving a Cut game: 50 points, 0 lines, level 0, 0:09',
+    );
+    assert.equal(
+      line({ type: 'leave', via: 'menu', mode: 'online', host: true, round: 3, you: 800, name: 'ANN' }),
+      '🚪 ANN quit to the menu from Online Versus round 3 as host: 800 points',
     );
   });
 
@@ -59,6 +83,9 @@ describe('event messages', () => {
       ['online without round', { type: 'start', mode: 'online', host: true, player: PLAYER }],
       ['fractional score', { type: 'finish', mode: 'cut', score: 1.5, lines: 1, level: 0, durationMs: 1, player: PLAYER }],
       ['one versus score', { type: 'finish', mode: 'versus', scores: [1], player: PLAYER }],
+      ['online leave without round', { type: 'leave', via: 'menu', mode: 'online', host: true, you: 1, player: PLAYER }],
+      ['leave without via', { type: 'leave', mode: 'versus', scores: [1, 2], player: PLAYER }],
+      ['versus winner 3', { type: 'finish', mode: 'versus', scores: [1, 2], winner: 3, player: PLAYER }],
       ['unknown theme', { type: 'theme', theme: 'neon', player: PLAYER }],
       ['muted as a string', { type: 'sound', muted: 'yes', player: PLAYER }],
       ['volume over 100', { type: 'volume', sfx: 101, music: 0, player: PLAYER }],

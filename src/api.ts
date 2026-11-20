@@ -52,14 +52,15 @@ export interface GameRecord extends GameStats {
   bestCut: number;
   /** This browser's random id (storage.playerId), so one player's games can be told apart */
   player: string;
+  /** From startSession when the game began */
+  session: string;
 }
 
-export interface ScoreSubmission extends GameStats {
+/** A score is a name for a logged game: the server takes the numbers from the game it logged. */
+export interface ScoreSubmission {
   name: string;
-  /** From recordGame, so the logged game gets the name too */
-  gameId?: number;
-  /** This browser's random id, so the server can tie the name to it */
-  player: string;
+  /** The session the game was logged with (recordGame) */
+  session: string;
 }
 
 const NAME_CHARS = /^[\p{L}\p{N} .\-_!?']+$/u;
@@ -86,6 +87,16 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function fetchBoards(): Promise<Boards> {
   return call<Boards>(`api/leaderboard?mode=${MODE}`);
+}
+
+/** Called as a game starts: the server logs (and so scores) only games with a session. */
+export async function startSession(player: string): Promise<string> {
+  const r = await call<{ session: string }>('api/games/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ player }),
+  });
+  return r.session;
 }
 
 export function recordGame(g: GameRecord): Promise<{ id: number }> {

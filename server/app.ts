@@ -7,7 +7,7 @@ import type { ScoreDb } from './db.ts';
 import { eventMessage, validateEvent } from './events.ts';
 import { type MatchOptions, Matches } from './match.ts';
 import { type Notify, silent } from './notifier.ts';
-import { MODES, type Mode, validate, validateGame, weekStart } from './scores.ts';
+import { MODES, type Mode, PLAYER_ID, SESSION_SLACK_MS, validate, validateGame, weekStart } from './scores.ts';
 import { acceptUpgrade, refuseUpgrade } from './ws.ts';
 
 export interface AppOptions {
@@ -20,6 +20,8 @@ export interface AppOptions {
   rateLimit?: { max: number; windowMs: number };
   /** Game-log records allowed per IP per window. */
   gameRateLimit?: { max: number; windowMs: number };
+  /** Game sessions started per IP per window. */
+  sessionRateLimit?: { max: number; windowMs: number };
   /** Online rooms created or joined per IP per window. */
   matchRateLimit?: { max: number; windowMs: number };
   /** Reports for the events chat (POST /api/events) allowed per IP per window. */
@@ -194,6 +196,8 @@ export function createApp(opts: AppOptions): AppServer {
   const limit = rateLimiter(opts.rateLimit?.max ?? 30, opts.rateLimit?.windowMs ?? 10 * 60_000);
   // Every finished game is logged, and a game can end within seconds, so this one is looser.
   const gameLimit = rateLimiter(opts.gameRateLimit?.max ?? 60, opts.gameRateLimit?.windowMs ?? 10 * 60_000);
+  // Every game, logged or not, starts one, so a few more than games.
+  const sessionLimit = rateLimiter(opts.sessionRateLimit?.max ?? 90, opts.sessionRateLimit?.windowMs ?? 10 * 60_000);
   // Each create or join counts; a rematch stays in its room and doesn't.
   const matchLimit = rateLimiter(opts.matchRateLimit?.max ?? 30, opts.matchRateLimit?.windowMs ?? 10 * 60_000);
   // A game sends two reports (start and finish), so this allows about 30 games in 10 minutes. Past
@@ -260,6 +264,19 @@ export function createApp(opts: AppOptions): AppServer {
       return json(res, 200, boards(mode));
     }
 
+    // A game starts a session; only a game with one is logged, and only a logged game is scored.
+    if (path === '/api/games/start') {
+      const body = await postedJson(req, res);
+      if (body === undefined) return;
+      const player = (body as { player?: unknown } | null)?.player;
+      if (player !== undefined && (typeof player !== 'string' || !PLAYER_ID.test(player))) {
+        return json(res, 400, { error: 'player must be 32 lowercase hex digits' });
+      }
+      const at = now();
+      if (!sessionLimit(rateKey(clientIp(req)), at.getTime())) return json(res, 429, { error: 'too many games, try again later' });
+      return json(res, 201, { session: db.startSession((player as string | undefined) ?? null, at) });
+    }
+
     if (path === '/api/games') {
       const body = await postedJson(req, res);
       if (body === undefined) return;
@@ -267,7 +284,16 @@ export function createApp(opts: AppOptions): AppServer {
       if (!checked.ok) return json(res, 400, { error: checked.error });
       const at = now();
       if (!gameLimit(rateKey(clientIp(req)), at.getTime())) return json(res, 429, { error: 'too many games, try again later' });
-      return json(res, 201, { id: db.addGame(checked.value, at) });
+      const g = checked.value;
+      // Taken even when the game is then refused: a session is good for one try.
+      const session = db.takeSession(g.session, at);
+      if (!session) return json(res, 400, { error: 'unknown, used or expired session' });
+      if (session.player !== (g.player ?? null)) return json(res, 400, { error: 'session belongs to another player' });
+      if (g.durationMs > at.getTime() - session.startedAt + SESSION_SLACK_MS) {
+        console.warn(`[game] refused ${g.durationMs} ms of play in ${at.getTime() - session.startedAt} ms, score ${g.score}`);
+        return json(res, 400, { error: 'game longer than its session' });
+      }
+      return json(res, 201, { id: db.addGame(g, at) });
     }
 
     if (path === '/api/events') {
@@ -289,11 +315,11 @@ export function createApp(opts: AppOptions): AppServer {
       const at = now();
       if (!limit(rateKey(clientIp(req)), at.getTime())) return json(res, 429, { error: 'too many scores, try again later' });
 
-      const s = checked.value;
-      const id = db.add(s, at);
+      const s = db.add(checked.value, at);
+      if (!s) return json(res, 400, { error: 'no logged game with that session to score' });
       console.log(`[score] ${s.mode} ${s.name} ${s.score}`);
       return json(res, 201, {
-        id,
+        id: s.id,
         name: s.name,
         weekRank: db.rank(s.mode, s.name, weekStart(at)),
         allTimeRank: db.rank(s.mode, s.name, null),

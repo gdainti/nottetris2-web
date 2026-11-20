@@ -8,20 +8,13 @@ import { after, before, describe, test } from 'node:test';
 import { gunzipSync } from 'node:zlib';
 import { createApp, rateKey } from './app.ts';
 import { ScoreDb } from './db.ts';
-import { type GameRecord, normalizeName, type Submission, validate, validateGame, weekStart } from './scores.ts';
+import { type GameRecord, normalizeName, SESSION_MAX_AGE_MS, type Submission, validate, validateGame, weekStart } from './scores.ts';
 
-const cut = (over: Partial<Submission> = {}): Submission => ({
-  mode: 'cut',
-  name: 'ANN',
-  score: 500,
-  lines: 4,
-  level: 0,
-  pieces: 12,
-  durationMs: 60_000,
-  tSpins: 0,
-  tSpinPoints: 0,
-  ...over,
-});
+let sessions = 0;
+/** A fresh session id, as the server would make (the unit tests don't need a real one). */
+const sid = () => (++sessions).toString(16).padStart(32, '0');
+
+const claim = (over: Partial<Submission> = {}): Submission => ({ mode: 'cut', name: 'ANN', session: sid(), ...over });
 
 const played = (over: Partial<GameRecord> = {}): GameRecord => ({
   mode: 'cut',
@@ -34,8 +27,18 @@ const played = (over: Partial<GameRecord> = {}): GameRecord => ({
   durationMs: 60_000,
   tSpins: 0,
   tSpinPoints: 0,
+  session: sid(),
   ...over,
 });
+
+/** Logs a game and puts it on the board under `name`, the way the HTTP layer does. */
+function scoreGame(db: ScoreDb, name: string, over: Partial<GameRecord>, at: Date) {
+  const g = played(over);
+  const gameId = db.addGame(g, at);
+  const score = db.add(claim({ name, session: g.session }), at);
+  assert.ok(score, `${name} scored`);
+  return { ...score, gameId };
+}
 
 describe('names', () => {
   test('are trimmed, squeezed and upper-cased', () => {
@@ -54,38 +57,25 @@ describe('names', () => {
 });
 
 describe('validate', () => {
-  test('accepts real-looking results', () => {
-    assert.ok(validate(cut()).ok);
-    assert.ok(validate(cut({ lines: 25, level: 2, score: 6000, pieces: 60, durationMs: 400_000 })).ok);
+  test('a score is a name and a session', () => {
+    const ok = validate({ mode: 'cut', name: ' ann ', session: 'ab'.repeat(16) });
+    assert.deepEqual(ok, { ok: true, value: { mode: 'cut', name: 'ANN', session: 'ab'.repeat(16) } });
+    // The numbers a client sends are ignored: they come from the logged game
+    const extra = validate({ ...claim(), score: 99_999 });
+    assert.ok(extra.ok && !('score' in extra.value));
   });
 
-  test('rejects impossible results', () => {
+  test('rejects a bad name, mode or session', () => {
     const cases: [string, unknown][] = [
-      ['mode', { ...cut(), mode: 'versus' }],
-      ['stack is gone', { ...cut(), mode: 'stack', score: 2300, pieces: 23, lines: 0, level: 0 }],
-      ['zero score', cut({ score: 0 })],
-      ['fractional score', cut({ score: 10.5 })],
-      ['level not lines/10', cut({ lines: 12, level: 0 })],
-      ['too many points per row', cut({ lines: 2, score: 5000, pieces: 10 })],
-      ['too few pieces for the rows', cut({ lines: 10, level: 1, score: 2000, pieces: 15 })],
-      ['too fast', cut({ durationMs: 1000 })],
+      ['mode', { ...claim(), mode: 'versus' }],
+      ['name', { ...claim(), name: '<script>' }],
+      ['no session', { ...claim(), session: undefined }],
+      ['short session', { ...claim(), session: 'abc' }],
+      ['upper-case session', { ...claim(), session: 'AB'.repeat(16) }],
+      ['a game id instead', { mode: 'cut', name: 'ANN', gameId: 7 }],
       ['not an object', 'hello'],
     ];
     for (const [why, body] of cases) assert.equal(validate(body).ok, false, why);
-  });
-
-  test('takes a score of T-spins alone', () => {
-    assert.ok(validate(cut({ score: 111, lines: 0, pieces: 3, tSpins: 3, tSpinPoints: 111 })).ok);
-    assert.equal(validate(cut({ score: 111, lines: 0, pieces: 3 })).ok, false);
-  });
-});
-
-describe('validate a score with its game', () => {
-  test('a gameId is optional and must be a positive whole number', () => {
-    const ok = validate({ ...cut(), gameId: 7 });
-    assert.ok(ok.ok && ok.value.gameId === 7);
-    assert.ok(validate(cut()).ok && !('gameId' in (validate(cut()) as { value: object }).value));
-    for (const bad of [0, -1, 1.5, '7', null]) assert.equal(validate({ ...cut(), gameId: bad }).ok, false, String(bad));
   });
 });
 
@@ -96,6 +86,12 @@ describe('validateGame', () => {
     assert.ok(validateGame(played({ score: 0, lines: 0, cuts: 0, bestCut: 0, pieces: 0, durationMs: 0 })).ok);
     assert.ok(validateGame(played({ lines: 1, cuts: 1, bestCut: 1, score: 80, pieces: 5 })).ok);
     assert.ok(validateGame(played({ lines: 25, level: 2, score: 6000, pieces: 60, cuts: 10, bestCut: 4, durationMs: 400_000 })).ok);
+  });
+
+  test('needs a session', () => {
+    for (const bad of [undefined, '', 'x'.repeat(32), 42]) assert.equal(validateGame({ ...played(), session: bad }).ok, false, String(bad));
+    const id = sid();
+    assert.equal((validateGame(played({ session: id })) as { value: GameRecord }).value.session, id);
   });
 
   test('takes an optional player id of 32 lowercase hex digits', () => {
@@ -149,42 +145,85 @@ describe('validateGame', () => {
   });
 });
 
+describe('sessions', () => {
+  const at = new Date('2026-11-18T12:00:00Z');
+  const later = (ms: number) => new Date(at.getTime() + ms);
+
+  test('are random, and can be taken once', () => {
+    const db = new ScoreDb(':memory:');
+    const player = 'aaaa0000000000000000000000000000';
+    const a = db.startSession(player, at);
+    const b = db.startSession(null, at);
+    assert.match(a, /^[0-9a-f]{32}$/);
+    assert.notEqual(a, b);
+    assert.deepEqual(db.takeSession(a, later(5000)), { player, startedAt: at.getTime() });
+    assert.equal(db.takeSession(a, later(6000)), null);
+    assert.deepEqual(db.takeSession(b, later(5000)), { player: null, startedAt: at.getTime() });
+    assert.equal(db.takeSession(sid(), at), null);
+    db.close();
+  });
+
+  test('expire, and old ones are dropped as new ones start', () => {
+    const db = new ScoreDb(':memory:');
+    const old = db.startSession(null, at);
+    const kept = db.startSession(null, at);
+    assert.equal(db.takeSession(old, later(SESSION_MAX_AGE_MS)), null);
+    const count = () => (db.sql.prepare('SELECT COUNT(*) AS n FROM session').get() as { n: number }).n;
+    assert.equal(count(), 1);
+    db.startSession(null, later(SESSION_MAX_AGE_MS));
+    assert.equal(count(), 1); // `kept` is gone too
+    assert.equal(db.takeSession(kept, later(SESSION_MAX_AGE_MS)), null);
+    db.close();
+  });
+});
+
 describe('game log', () => {
   const at = new Date('2026-11-18T12:00:00Z');
   const game = (db: ScoreDb, id: number) => db.sql.prepare('SELECT name, score_id FROM game WHERE id = ?').get(id);
 
   test('a submitted score names its game; a skipped game stays unnamed', () => {
     const db = new ScoreDb(':memory:');
-    const scored = db.addGame(played(), at);
+    const scored = scoreGame(db, 'ANN', {}, at);
     const skipped = db.addGame(played({ score: 300 }), at);
-    const scoreId = db.add(cut({ name: 'ANN', gameId: scored }), at);
-    assert.deepEqual({ ...game(db, scored) }, { name: 'ANN', score_id: scoreId });
+    assert.deepEqual({ ...game(db, scored.gameId) }, { name: 'ANN', score_id: scored.id });
     assert.deepEqual({ ...game(db, skipped) }, { name: null, score_id: null });
     db.close();
   });
 
-  test("a score can't name a game with other numbers, or one already named", () => {
+  test("a score has its game's numbers, and a game is scored once", () => {
     const db = new ScoreDb(':memory:');
-    const id = db.addGame(played(), at);
-    db.add(cut({ name: 'EVE', score: 499, gameId: id }), at);
-    assert.equal(game(db, id)!.name, null);
-    db.add(cut({ name: 'ANN', gameId: id }), at);
-    db.add(cut({ name: 'EVE', gameId: id }), at);
+    const g = played({ score: 612, tSpins: 4, tSpinPoints: 112 });
+    const id = db.addGame(g, at);
+    const s = db.add(claim({ name: 'ANN', session: g.session }), at);
+    assert.deepEqual(s, { id: s!.id, mode: 'cut', name: 'ANN', score: 612 });
+    assert.deepEqual(
+      db.board('cut', null, 10).map((e) => [e.name, e.score, e.lines, e.pieces]),
+      [['ANN', 612, 4, 12]],
+    );
+    assert.equal(db.add(claim({ name: 'EVE', session: g.session }), at), null);
     assert.equal(game(db, id)!.name, 'ANN');
-    db.add(cut({ name: 'BOB', gameId: 999 }), at); // no such game: the score still counts
-    assert.equal(db.board('cut', null, 10).length, 3);
+    assert.equal(db.board('cut', null, 10).length, 1);
+    db.close();
+  });
+
+  test('no score without a logged game, or for a game that scored nothing', () => {
+    const db = new ScoreDb(':memory:');
+    assert.equal(db.add(claim({ name: 'BOB' }), at), null);
+    const zero = played({ score: 0, lines: 0, cuts: 0, bestCut: 0 });
+    db.addGame(zero, at);
+    assert.equal(db.add(claim({ name: 'BOB', session: zero.session }), at), null);
+    assert.deepEqual(db.board('cut', null, 10), []);
     db.close();
   });
 
   test('removing scores keeps the games but drops the link and the name', () => {
     const db = new ScoreDb(':memory:');
-    const a = db.addGame(played(), at);
-    const b = db.addGame(played(), at);
-    db.remove(db.add(cut({ name: 'ANN', gameId: a }), at));
-    assert.deepEqual({ ...game(db, a) }, { name: 'ANN', score_id: null });
-    db.add(cut({ name: 'BOB', gameId: b }), at);
+    const a = scoreGame(db, 'ANN', {}, at);
+    db.remove(a.id);
+    assert.deepEqual({ ...game(db, a.gameId) }, { name: 'ANN', score_id: null });
+    const b = scoreGame(db, 'BOB', {}, at);
     assert.equal(db.removeName('BOB'), 1);
-    assert.deepEqual({ ...game(db, b) }, { name: null, score_id: null });
+    assert.deepEqual({ ...game(db, b.gameId) }, { name: null, score_id: null });
     assert.equal(db.gameTotals(null).games, 2);
     db.close();
   });
@@ -193,11 +232,10 @@ describe('game log', () => {
     const db = new ScoreDb(':memory:');
     const ann = 'aaaa0000000000000000000000000000';
     const bob = 'bbbb0000000000000000000000000000';
-    const a1 = db.addGame(played({ player: ann }), at);
+    const a1 = scoreGame(db, 'ANN', { player: ann }, at).gameId;
     const b1 = db.addGame(played({ player: bob }), at);
     const a2 = db.addGame(played({ player: ann, score: 300 }), new Date(at.getTime() + 60_000));
     db.addGame(played(), at); // an older client: no id
-    db.add(cut({ name: 'ANN', gameId: a1, player: ann }), at);
 
     assert.deepEqual(
       db.gamesByPlayer(ann).map((g) => [g.id, g.name]),
@@ -215,17 +253,17 @@ describe('game log', () => {
     db.close();
   });
 
-  test('a score ties its name to the player id; INCOGNITO does not', () => {
+  test("a score ties its name to its game's player id; INCOGNITO does not", () => {
     const db = new ScoreDb(':memory:');
     const ann = 'aaaa0000000000000000000000000000';
     const phone = 'cccc0000000000000000000000000000';
     const t = (min: number) => new Date(at.getTime() + min * 60_000);
-    db.add(cut({ name: 'ANN', player: ann }), t(0));
-    db.add(cut({ name: 'ANN', player: ann, score: 700 }), t(5));
-    db.add(cut({ name: 'ANNIE', player: ann }), t(10));
-    db.add(cut({ name: 'ANN', player: phone }), t(20));
-    db.add(cut({ name: 'INCOGNITO', player: ann }), t(30));
-    db.add(cut({ name: 'ANN' }), t(40)); // an older client: no id, no pair
+    scoreGame(db, 'ANN', { player: ann }, t(0));
+    scoreGame(db, 'ANN', { player: ann, score: 700 }, t(5));
+    scoreGame(db, 'ANNIE', { player: ann }, t(10));
+    scoreGame(db, 'ANN', { player: phone }, t(20));
+    scoreGame(db, 'INCOGNITO', { player: ann }, t(30));
+    scoreGame(db, 'ANN', {}, t(40)); // a game with no id: no pair
 
     const pairs = (rows: Record<string, unknown>[]) => rows.map((r) => [r.player, r.name, r.scores, r.first_at, r.last_at]);
     assert.deepEqual(pairs(db.namesOf('aaaa')), [
@@ -248,15 +286,6 @@ describe('game log', () => {
     db.close();
   });
 
-  test("a score can't name a game logged by another player id", () => {
-    const db = new ScoreDb(':memory:');
-    const id = db.addGame(played({ player: 'aaaa0000000000000000000000000000' }), at);
-    db.add(cut({ name: 'EVE', gameId: id, player: 'eeee0000000000000000000000000000' }), at);
-    db.add(cut({ name: 'EVE', gameId: id }), at);
-    assert.equal(game(db, id)!.name, null);
-    db.close();
-  });
-
   test('totals and days', () => {
     const db = new ScoreDb(':memory:');
     assert.deepEqual(
@@ -265,11 +294,9 @@ describe('game log', () => {
     );
     const lastWeek = new Date('2026-11-10T12:00:00Z');
     db.addGame(played({ score: 900, lines: 9, pieces: 30, cuts: 3, bestCut: 3 }), lastWeek);
-    const g1 = db.addGame(played(), at);
-    const g2 = db.addGame(played({ score: 200 }), at);
+    scoreGame(db, 'ANN', {}, at);
+    scoreGame(db, 'ANN', { score: 200 }, at);
     db.addGame(played({ score: 0, lines: 0, cuts: 0, bestCut: 0, pieces: 10 }), at);
-    db.add(cut({ name: 'ANN', gameId: g1 }), at);
-    db.add(cut({ name: 'ANN', score: 200, gameId: g2 }), at);
 
     assert.deepEqual(
       { ...db.gameTotals(null) },
@@ -303,11 +330,11 @@ describe('boards', () => {
   const since = weekStart(new Date('2026-11-18T12:00:00Z'));
 
   before(() => {
-    db.add(cut({ name: 'ANN', score: 900 }), lastWeek);
-    db.add(cut({ name: 'ANN', score: 300 }), thisWeek);
-    db.add(cut({ name: 'BOB', score: 400 }), thisWeek);
-    db.add(cut({ name: 'BOB', score: 350 }), thisWeek);
-    db.add(cut({ name: 'CY', score: 400 }), new Date(thisWeek.getTime() + 1000));
+    scoreGame(db, 'ANN', { score: 900 }, lastWeek);
+    scoreGame(db, 'ANN', { score: 300 }, thisWeek);
+    scoreGame(db, 'BOB', { score: 400 }, thisWeek);
+    scoreGame(db, 'BOB', { score: 350 }, thisWeek);
+    scoreGame(db, 'CY', { score: 400 }, new Date(thisWeek.getTime() + 1000));
   });
 
   test('all time: one row per player, their best, ties to whoever was first', () => {
@@ -390,8 +417,8 @@ test('migrating an old database drops Stack scores and keeps Cut ones', () => {
         indexes.map((r) => r.name),
         ['score_by_mode_name', 'score_by_mode_score', 'score_by_mode_time', 'score_by_player'],
       );
-      assert.equal(db.add(cut({ name: 'EVE' }), new Date(5)), 4); // ids carry on
       assert.equal(db.gameTotals(null).games, 0); // the game log starts empty
+      assert.equal(scoreGame(db, 'EVE', {}, new Date(5)).id, 4); // ids carry on
     } finally {
       db.close();
     }
@@ -406,9 +433,10 @@ test('migrating renames the old shared ANON scores and games to INCOGNITO', () =
     const file = join(dir, 'scores.db');
     // A database from before the rename, at user_version 5
     const old = new ScoreDb(file);
-    old.add(cut({ name: 'ANN' }), new Date(1));
-    old.add(cut({ name: 'ANON' }), new Date(2));
-    old.sql.exec(`INSERT INTO game (mode, name, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at)
+    old.sql.exec(`DROP INDEX game_by_session; ALTER TABLE game DROP COLUMN session; DROP TABLE session;
+                  INSERT INTO score (mode, name, score, lines, level, pieces, duration_ms, created_at)
+                  VALUES ('cut', 'ANN', 500, 4, 0, 12, 60000, 1), ('cut', 'ANON', 500, 4, 0, 12, 60000, 2);
+                  INSERT INTO game (mode, name, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at)
                   VALUES ('cut', 'ANON', 500, 4, 0, 12, 2, 2, 60000, 2), ('cut', NULL, 100, 1, 0, 4, 1, 1, 9000, 3);
                   ALTER TABLE game DROP COLUMN t_spins;
                   ALTER TABLE game DROP COLUMN t_spin_points;
@@ -450,6 +478,8 @@ describe('http', () => {
   const db = new ScoreDb(':memory:');
   let base = '';
   let server: ReturnType<typeof createApp>;
+  /** The server's clock, unix ms: moved forward to let games take their time. */
+  let clock = Date.parse('2026-11-18T12:00:00Z');
 
   before(async () => {
     mkdirSync(join(dir, 'assets'));
@@ -461,7 +491,8 @@ describe('http', () => {
       addressHeader: 'x-forwarded-for',
       rateLimit: { max: 3, windowMs: 60_000 },
       gameRateLimit: { max: 4, windowMs: 60_000 },
-      now: () => new Date('2026-11-18T12:00:00Z'),
+      sessionRateLimit: { max: 6, windowMs: 60_000 },
+      now: () => new Date(clock),
     });
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -486,6 +517,29 @@ describe('http', () => {
       headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `1.2.3.4, ${ip}` },
       body: JSON.stringify(body),
     });
+
+  const start = async (player?: string, ip = '10.0.0.1') => {
+    const r = await fetch(`${base}/api/games/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `1.2.3.4, ${ip}` },
+      body: JSON.stringify(player ? { player } : {}),
+    });
+    return { status: r.status, session: ((await r.json()) as { session: string }).session };
+  };
+
+  /** Starts a session, lets the game's time pass and logs it. Returns the session to score with. */
+  const playGame = async (over: Partial<GameRecord> = {}, ip = '10.0.0.1') => {
+    const { session } = await start(over.player, ip);
+    const g = played({ ...over, session });
+    clock += g.durationMs;
+    const r = await postGame(g, ip);
+    assert.equal(r.status, 201, await r.clone().text());
+    return { session, id: ((await r.json()) as { id: number }).id };
+  };
+
+  /** A whole game, logged and scored under `name` from the address `ip`. */
+  const scoreGame = async (name: string, ip = '10.0.0.1', over: Partial<GameRecord> = {}) =>
+    post({ mode: 'cut', name, session: (await playGame(over, `${ip}0`)).session }, ip);
 
   test('health check', async () => {
     const r = await fetch(`${base}/healthz`);
@@ -525,7 +579,7 @@ describe('http', () => {
   });
 
   test('a score goes in and comes back on both boards', async () => {
-    const r = await post({ ...cut(), name: ' zed ' });
+    const r = await scoreGame(' zed ');
     assert.equal(r.status, 201);
     const body = (await r.json()) as Boards;
     assert.equal(body.name, 'ZED');
@@ -541,53 +595,114 @@ describe('http', () => {
   });
 
   test('every game is logged, and a submitted score names its game', async () => {
-    const skipped = await postGame({ ...played(), score: 0, lines: 0, cuts: 0, bestCut: 0 }, '10.1.1.1');
-    assert.equal(skipped.status, 201);
-    const skippedId = ((await skipped.json()) as { id: number }).id;
-
+    const skipped = await playGame({ score: 0, lines: 0, cuts: 0, bestCut: 0 }, '10.1.1.1');
     const player = 'feed0000000000000000000000000000';
-    const r = await postGame(played({ player }), '10.1.1.1');
-    assert.equal(r.status, 201);
-    const { id } = (await r.json()) as { id: number };
-    assert.ok(id > skippedId);
+    const { session, id } = await playGame({ player }, '10.1.1.1');
+    assert.ok(id > skipped.id);
     assert.equal(db.sql.prepare('SELECT player FROM game WHERE id = ?').get(id)!.player, player);
 
-    assert.equal((await post({ ...cut(), name: 'logged', gameId: id, player }, '10.1.1.1')).status, 201);
+    assert.equal((await post({ mode: 'cut', name: 'logged', session }, '10.1.1.1')).status, 201);
     assert.deepEqual(
       db.playersOf('LOGGED').map((r) => r.player),
       [player],
     );
-    const rows = db.sql.prepare('SELECT id, name FROM game WHERE id IN (?, ?) ORDER BY id').all(skippedId, id);
+    const rows = db.sql.prepare('SELECT id, name FROM game WHERE id IN (?, ?) ORDER BY id').all(skipped.id, id);
     assert.deepEqual(
       rows.map((g) => [g.id, g.name]),
       [
-        [skippedId, null],
+        [skipped.id, null],
         [id, 'LOGGED'],
       ],
     );
   });
 
+  test('a game is logged once, against a session of its own player, after its time has passed', async () => {
+    const ip = '10.2.2.2';
+    const ann = 'aaaa0000000000000000000000000000';
+
+    // Logged right away, a minute's game is refused, and its session is used up
+    let { session } = await start(undefined, ip);
+    clock += 1000;
+    let r = await postGame(played({ session }), ip);
+    assert.equal(r.status, 400);
+    assert.match(((await r.json()) as { error: string }).error, /longer than its session/);
+    clock += 60_000;
+    assert.equal((await postGame(played({ session }), ip)).status, 400);
+
+    // A game may report up to SESSION_SLACK_MS more than the session's age
+    ({ session } = await start(undefined, ip));
+    clock += 52_000;
+    assert.equal((await postGame(played({ session }), ip)).status, 201);
+    assert.equal((await postGame(played({ session }), ip)).status, 400); // only once
+
+    // A session started for one player id doesn't log another's game
+    ({ session } = await start(ann, ip));
+    clock += 60_000;
+    assert.equal((await postGame(played({ session, player: 'bbbb0000000000000000000000000000' }), ip)).status, 400);
+
+    // Made-up and expired sessions log nothing
+    assert.equal((await postGame(played({ session: 'ab'.repeat(16) }), '10.2.2.3')).status, 400);
+    ({ session } = await start(undefined, '10.2.2.3'));
+    clock += SESSION_MAX_AGE_MS;
+    assert.equal((await postGame(played({ session }), '10.2.2.3')).status, 400);
+  });
+
+  test('a score needs a logged game, and gets the numbers the game was logged with', async () => {
+    const ip = '10.3.3.3';
+    // A started but unlogged game, or a made-up session, can't be scored
+    const { session: unlogged } = await start(undefined, `${ip}0`);
+    assert.equal((await post({ mode: 'cut', name: 'FAKE', session: unlogged }, ip)).status, 400);
+    assert.equal((await post({ mode: 'cut', name: 'FAKE', session: 'cd'.repeat(16) }, ip)).status, 400);
+
+    const { session } = await playGame({ score: 380, lines: 3, cuts: 1, bestCut: 3, pieces: 9 }, `${ip}0`);
+    const r = await post({ mode: 'cut', name: 'REAL', session, score: 99_999_999, lines: 50 }, ip);
+    assert.equal(r.status, 201);
+    const body = (await r.json()) as Boards;
+    assert.deepEqual(
+      body.allTime.filter((e) => e.name === 'REAL').map((e) => e.score),
+      [380],
+    );
+    assert.equal((await post({ mode: 'cut', name: 'AGAIN', session }, ip)).status, 400);
+    assert.equal(db.board('cut', null, 100).filter((e) => e.name === 'FAKE' || e.name === 'AGAIN').length, 0);
+  });
+
   test('bad game records are refused', async () => {
-    assert.equal((await postGame(played({ cuts: 0 }))).status, 400);
-    assert.equal((await postGame({ ...played(), mode: 'stack' })).status, 400);
-    assert.equal((await postGame({ ...played(), player: 'not-an-id' })).status, 400);
-    assert.equal((await post({ ...cut(), player: 'not-an-id' })).status, 400);
-    assert.equal((await post({ ...cut(), gameId: 'x' })).status, 400);
+    const { session } = await start(undefined, '10.4.4.4');
+    assert.equal((await postGame(played({ cuts: 0, session }))).status, 400);
+    assert.equal((await postGame({ ...played({ session }), mode: 'stack' })).status, 400);
+    assert.equal((await postGame({ ...played({ session }), player: 'not-an-id' })).status, 400);
+    assert.equal((await postGame({ ...played(), session: undefined })).status, 400);
+    assert.equal((await post({ mode: 'cut', name: 'ANN', session: 'x' })).status, 400);
+    assert.equal((await post({ mode: 'cut', name: 'ANN', gameId: 1 })).status, 400);
     assert.equal((await fetch(`${base}/api/games`)).status, 405);
     assert.equal((await fetch(`${base}/api/games`, { method: 'POST', body: '{}' })).status, 415);
+    assert.equal((await fetch(`${base}/api/games/start`)).status, 405);
+    const badStart = await fetch(`${base}/api/games/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ player: 'not-an-id' }),
+    });
+    assert.equal(badStart.status, 400);
     const broken = await fetch(`${base}/api/games`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{' });
     assert.equal(broken.status, 400);
   });
 
-  test('too many games from one address are refused, apart from the score limit', async () => {
+  test('too many sessions or games from one address are refused, apart from the score limit', async () => {
     const ip = '10.7.7.7';
-    for (let i = 0; i < 4; i++) assert.equal((await postGame(played(), ip)).status, 201);
-    assert.equal((await postGame(played(), ip)).status, 429);
-    assert.equal((await post(cut({ name: 'STILL' }), ip)).status, 201);
+    const sessions: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const r = await start(undefined, ip);
+      assert.equal(r.status, 201);
+      sessions.push(r.session);
+    }
+    assert.equal((await start(undefined, ip)).status, 429);
+    clock += 60_000;
+    for (let i = 0; i < 4; i++) assert.equal((await postGame(played({ session: sessions[i] }), ip)).status, 201);
+    assert.equal((await postGame(played({ session: sessions[4] }), ip)).status, 429);
+    assert.equal((await post({ mode: 'cut', name: 'STILL', session: sessions[0] }, ip)).status, 201);
   });
 
   test('bad requests are refused', async () => {
-    assert.equal((await post({ ...cut(), score: 99999999 })).status, 400);
     assert.equal((await fetch(`${base}/api/leaderboard?mode=versus`)).status, 400);
     assert.equal((await fetch(`${base}/api/scores`)).status, 405);
     const notJson = await fetch(`${base}/api/scores`, { method: 'POST', body: 'name=x' });
@@ -595,23 +710,33 @@ describe('http', () => {
     const huge = await fetch(`${base}/api/scores`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...cut(), pad: 'x'.repeat(5000) }),
+      body: JSON.stringify({ ...claim(), pad: 'x'.repeat(5000) }),
     });
     assert.equal(huge.status, 413);
     assert.equal((await fetch(`${base}/api/nothing`)).status, 404);
   });
 
+  // The games are played first: each moves the clock past the limit's window.
+  const ready = async (n: number) => {
+    const sessions: string[] = [];
+    for (let i = 0; i < n; i++) sessions.push((await playGame({}, `10.6.6.${i}`)).session);
+    return sessions;
+  };
+  const score = (name: string, session: string, ip: string) => post({ mode: 'cut', name, session }, ip);
+
   test('too many scores from one address are refused', async () => {
     const ip = '10.9.9.9';
-    for (let i = 0; i < 3; i++) assert.equal((await post(cut({ name: `R${i}` }), ip)).status, 201);
-    assert.equal((await post(cut({ name: 'R9' }), ip)).status, 429);
-    assert.equal((await post(cut({ name: 'OTHER' }), '10.8.8.8')).status, 201);
+    const s = await ready(5);
+    for (let i = 0; i < 3; i++) assert.equal((await score(`R${i}`, s[i], ip)).status, 201);
+    assert.equal((await score('R9', s[3], ip)).status, 429);
+    assert.equal((await score('OTHER', s[4], '10.8.8.8')).status, 201);
   });
 
   test('IPv6 addresses in one /64 share a limit', async () => {
-    for (let i = 0; i < 3; i++) assert.equal((await post(cut({ name: `S${i}` }), `2001:db8:1:2::${i + 1}`)).status, 201);
-    assert.equal((await post(cut({ name: 'S9' }), '2001:db8:1:2:ffff:ffff:ffff:ffff')).status, 429);
-    assert.equal((await post(cut({ name: 'NEXT' }), '2001:db8:1:3::1')).status, 201);
+    const s = await ready(5);
+    for (let i = 0; i < 3; i++) assert.equal((await score(`S${i}`, s[i], `2001:db8:1:2::${i + 1}`)).status, 201);
+    assert.equal((await score('S9', s[3], '2001:db8:1:2:ffff:ffff:ffff:ffff')).status, 429);
+    assert.equal((await score('NEXT', s[4], '2001:db8:1:3::1')).status, 201);
   });
 });
 

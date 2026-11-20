@@ -1,7 +1,8 @@
+import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { ANON, type GameRecord, type Mode, type Submission } from './scores.ts';
+import { ANON, type GameRecord, type Mode, SESSION_MAX_AGE_MS, type Submission } from './scores.ts';
 
 export interface BoardEntry {
   rank: number;
@@ -128,7 +129,34 @@ const MIGRATIONS = [
    ALTER TABLE match ADD COLUMN host_t_spin_points INTEGER;
    ALTER TABLE match ADD COLUMN guest_t_spins INTEGER;
    ALTER TABLE match ADD COLUMN guest_t_spin_points INTEGER;`,
+
+  // Game sessions: POST /api/games/start makes one, and a game is only logged against one that is
+  // unused and old enough for the play it reports. The game keeps its session id, which is also
+  // what its score is claimed with (secret and random, unlike the game's id). Games logged before
+  // this have none and can't be scored any more.
+  `CREATE TABLE session (
+     id         TEXT    PRIMARY KEY,
+     player     TEXT,
+     started_at INTEGER NOT NULL -- unix ms
+   ) WITHOUT ROWID;
+   CREATE INDEX session_by_time ON session (started_at);
+   ALTER TABLE game ADD COLUMN session TEXT;
+   CREATE UNIQUE INDEX game_by_session ON game (session) WHERE session IS NOT NULL;`,
 ];
+
+/** A game session as taken (and so used up) by ScoreDb.takeSession. */
+export interface Session {
+  player: string | null;
+  startedAt: number;
+}
+
+/** A score as stored: the name from the submission, the numbers from its game. */
+export interface StoredScore {
+  id: number;
+  mode: Mode;
+  name: string;
+  score: number;
+}
 
 /** One online Versus round, as server/match.ts reports it. */
 export interface MatchRecord {
@@ -143,7 +171,9 @@ export interface MatchRecord {
   hostTSpinPoints: number | null;
   guestTSpins: number | null;
   guestTSpinPoints: number | null;
-  /** finished: both topped out; host-left / guest-left: who left (or dropped) first; restart: the server stopped */
+  /** Who won a finished round (the other player topped out first); null otherwise */
+  winner: 'host' | 'guest' | null;
+  /** finished: both reported a score (the loser on topping out, the winner when told); host-left / guest-left: who left (or dropped) first; restart: the server stopped */
   ended: 'finished' | 'host-left' | 'guest-left' | 'restart';
   durationMs: number;
 }
@@ -202,41 +232,61 @@ export class ScoreDb {
     }
   }
 
+  /** Starts a game session and returns its id. Also drops sessions too old to be used. */
+  startSession(player: string | null, at: Date): string {
+    this.sql.prepare('DELETE FROM session WHERE started_at <= ?').run(at.getTime() - SESSION_MAX_AGE_MS);
+    const id = randomBytes(16).toString('hex');
+    this.sql.prepare('INSERT INTO session (id, player, started_at) VALUES (?, ?, ?)').run(id, player, at.getTime());
+    return id;
+  }
+
+  /** Removes a session and returns it, or null when there is none (never started, used or expired). */
+  takeSession(id: string, at: Date): Session | null {
+    const row = this.sql.prepare('DELETE FROM session WHERE id = ? RETURNING player, started_at').get(id) as
+      | { player: string | null; started_at: number }
+      | undefined;
+    if (!row || row.started_at <= at.getTime() - SESSION_MAX_AGE_MS) return null;
+    return { player: row.player, startedAt: row.started_at };
+  }
+
   /**
-   * Adds a leaderboard score. With a gameId, that game-log row gets the name too, but only if it is
-   * still unnamed, from the same player id and its numbers match: a score can't rename someone
-   * else's game. With a player id (and a name of their own, not ANON), the pair is recorded.
+   * Adds a leaderboard score for the logged game with this session, if it has none yet and scored
+   * something. The numbers are the game's. The game gets the name, and with a player id (and a name
+   * of their own, not ANON) the pair is recorded. Null when there is no such game to score.
    */
-  add(s: Submission, at: Date): number {
-    const player = s.player ?? null;
+  add(s: Submission, at: Date): StoredScore | null {
     this.sql.exec('BEGIN');
     try {
+      const g = this.sql
+        .prepare(
+          `SELECT id, mode, player, score, lines, level, pieces, duration_ms FROM game
+           WHERE session = ? AND mode = ? AND score_id IS NULL AND name IS NULL AND score > 0`,
+        )
+        .get(s.session, s.mode) as
+        | { id: number; mode: Mode; player: string | null; score: number; lines: number; level: number; pieces: number; duration_ms: number }
+        | undefined;
+      if (!g) {
+        this.sql.exec('ROLLBACK');
+        return null;
+      }
       const r = this.sql
         .prepare(
           `INSERT INTO score (mode, name, player, score, lines, level, pieces, duration_ms, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(s.mode, s.name, player, s.score, s.lines, s.level, s.pieces, s.durationMs, at.getTime());
+        .run(g.mode, s.name, g.player, g.score, g.lines, g.level, g.pieces, g.duration_ms, at.getTime());
       const id = Number(r.lastInsertRowid);
-      if (s.gameId !== undefined) {
-        this.sql
-          .prepare(
-            `UPDATE game SET name = ?, score_id = ?
-             WHERE id = ? AND name IS NULL AND player IS ?
-               AND mode = ? AND score = ? AND lines = ? AND pieces = ? AND duration_ms = ?`,
-          )
-          .run(s.name, id, s.gameId, player, s.mode, s.score, s.lines, s.pieces, s.durationMs);
-      }
-      if (player !== null && s.name !== ANON) {
+      this.sql.prepare('UPDATE game SET name = ?, score_id = ? WHERE id = ?').run(s.name, id, g.id);
+      if (g.player !== null && s.name !== ANON) {
         this.sql
           .prepare(
             `INSERT INTO player_name (player, name, scores, first_at, last_at) VALUES (?, ?, 1, ?, ?)
              ON CONFLICT (player, name) DO UPDATE SET scores = scores + 1, last_at = excluded.last_at`,
           )
-          .run(player, s.name, at.getTime(), at.getTime());
+          .run(g.player, s.name, at.getTime(), at.getTime());
       }
       this.sql.exec('COMMIT');
-      return id;
+      return { id, mode: g.mode, name: s.name, score: g.score };
     } catch (e) {
       this.sql.exec('ROLLBACK');
       throw e;
@@ -263,27 +313,20 @@ export class ScoreDb {
       .all(name);
   }
 
-  /** Logs a finished game, scored or not. */
+  /** Logs a finished game, scored or not. Its session should have been taken (takeSession) first. */
   addGame(g: GameRecord, at: Date): number {
     const r = this.sql
       .prepare(
-        `INSERT INTO game (mode, player, score, lines, level, pieces, cuts, best_cut, t_spins, t_spin_points, duration_ms, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO game (mode, player, session, score, lines, level, pieces, cuts, best_cut, t_spins, t_spin_points, duration_ms, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(g.mode, g.player ?? null, g.score, g.lines, g.level, g.pieces, g.cuts, g.bestCut, g.tSpins, g.tSpinPoints, g.durationMs, at.getTime());
+      .run(g.mode, g.player ?? null, g.session, g.score, g.lines, g.level, g.pieces, g.cuts, g.bestCut, g.tSpins, g.tSpinPoints, g.durationMs, at.getTime());
     return Number(r.lastInsertRowid);
   }
 
-  /** Logs an online Versus round. The winner follows from the scores of a finished round. */
+  /** Logs an online Versus round. Rounds logged before the first-to-top-out rule may say 'draw'. */
   addMatch(m: MatchRecord, at: Date): number {
-    const winner =
-      m.ended !== 'finished' || m.hostScore === null || m.guestScore === null
-        ? null
-        : m.hostScore > m.guestScore
-          ? 'host'
-          : m.guestScore > m.hostScore
-            ? 'guest'
-            : 'draw';
+    const winner = m.ended === 'finished' ? m.winner : null;
     const r = this.sql
       .prepare(
         `INSERT INTO match (room, round, host, guest, host_score, guest_score, host_t_spins, host_t_spin_points,
