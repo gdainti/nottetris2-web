@@ -177,6 +177,69 @@ describe('sessions', () => {
   });
 });
 
+describe('game starts', () => {
+  const at = new Date('2026-11-18T12:00:00Z'); // a Wednesday
+  const lastWeek = new Date('2026-11-10T12:00:00Z');
+  const since = weekStart(at);
+  const ann = 'aaaa0000000000000000000000000000';
+  const bob = 'bbbb0000000000000000000000000000';
+
+  test('count every started game, finished or not, and the names on the board', () => {
+    const db = new ScoreDb(':memory:');
+    db.startSession(ann, lastWeek);
+    const used = db.startSession(ann, at);
+    db.startSession(bob, at);
+    db.startSession(null, at);
+    db.takeSession(used, at); // a used session still counts as a start
+    scoreGame(db, 'ANN', { player: ann }, lastWeek);
+    scoreGame(db, 'BOB', { player: bob }, at);
+    scoreGame(db, 'BOB', { player: bob }, at);
+    scoreGame(db, 'INCOGNITO', {}, at); // the shared name isn't a player
+    assert.deepEqual(db.boardStats('cut', since), { started: 3, names: 1 });
+    assert.deepEqual(db.boardStats('cut', null), { started: 4, names: 2 });
+    db.close();
+  });
+
+  test('top starters: most games started per player id, with the names they use', () => {
+    const db = new ScoreDb(':memory:');
+    for (let i = 0; i < 3; i++) db.startSession(bob, at);
+    db.startSession(ann, at);
+    db.startSession(null, at);
+    scoreGame(db, 'BOB', { player: bob, score: 700 }, at);
+    const top = db.topStarters(null, 10).map((r) => [r.player, r.started, r.finished, r.best, r.names]);
+    assert.deepEqual(top, [
+      [bob, 3, 1, 700, 'BOB'],
+      [ann, 1, 0, 0, null],
+    ]);
+    assert.equal(db.topStarters(null, 1).length, 1);
+    db.close();
+  });
+
+  test('migrating counts the logged games and open sessions as starts', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nt2-migrate-'));
+    try {
+      const file = join(dir, 'scores.db');
+      // A database from before game starts were kept, at user_version 9
+      const old = new ScoreDb(file);
+      old.addGame(played({ player: ann, durationMs: 60_000 }), at);
+      old.startSession(bob, at);
+      old.sql.exec('DROP TABLE game_start; PRAGMA user_version = 9;');
+      old.close();
+      const again = new ScoreDb(file);
+      assert.deepEqual(
+        again.sql.prepare('SELECT player, started_at FROM game_start ORDER BY started_at').all().map((r) => [r.player, r.started_at]),
+        [
+          [ann, at.getTime() - 60_000],
+          [bob, at.getTime()],
+        ],
+      );
+      again.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('game log', () => {
   const at = new Date('2026-11-18T12:00:00Z');
   const game = (db: ScoreDb, id: number) => db.sql.prepare('SELECT name, score_id FROM game WHERE id = ?').get(id);
@@ -379,6 +442,7 @@ interface Boards {
   weekStart: string;
   week: { name: string; score: number }[];
   allTime: { name: string; score: number }[];
+  stats: { week: { started: number; names: number }; allTime: { started: number; names: number } };
 }
 
 test('migrating an old database drops Stack scores and keeps Cut ones', () => {
@@ -433,7 +497,8 @@ test('migrating renames the old shared ANON scores and games to INCOGNITO', () =
     const file = join(dir, 'scores.db');
     // A database from before the rename, at user_version 5
     const old = new ScoreDb(file);
-    old.sql.exec(`DROP INDEX game_by_session; ALTER TABLE game DROP COLUMN session; DROP TABLE session;
+    old.sql.exec(`DROP TABLE game_start;
+                  DROP INDEX game_by_session; ALTER TABLE game DROP COLUMN session; DROP TABLE session;
                   INSERT INTO score (mode, name, score, lines, level, pieces, duration_ms, created_at)
                   VALUES ('cut', 'ANN', 500, 4, 0, 12, 60000, 1), ('cut', 'ANON', 500, 4, 0, 12, 60000, 2);
                   INSERT INTO game (mode, name, score, lines, level, pieces, cuts, best_cut, duration_ms, created_at)
@@ -591,6 +656,8 @@ describe('http', () => {
 
     const board = (await (await fetch(`${base}/api/leaderboard?mode=cut`)).json()) as Boards;
     assert.equal(board.week[0].name, 'ZED');
+    assert.ok(board.stats.allTime.started >= 1);
+    assert.ok(board.stats.week.names >= 1);
     assert.equal((await fetch(`${base}/api/leaderboard?mode=stack`)).status, 400);
   });
 

@@ -70,6 +70,8 @@ names and devices can be found from either side. Logging allows 60 games per IP 
 ```sh
 docker exec slicefall node server/admin.ts stats              # games today, this week, all time; then per day; then online rounds
 docker exec slicefall node server/admin.ts stats 30           # ... with 30 days in the per-day table
+docker exec slicefall node server/admin.ts top                # players who started the most games (all time), with their names
+docker exec slicefall node server/admin.ts top 10 7           # ... top 10 over the last 7 days
 docker exec slicefall node server/admin.ts games 20           # latest games, "(no name)" when skipped
 docker exec slicefall node server/admin.ts matches 20         # latest online Versus rounds
 docker exec slicefall node server/admin.ts player 3f9a1c07    # names, games and online rounds of one player id (the first digits will do)

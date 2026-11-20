@@ -313,7 +313,13 @@ function boardHtml(view: BoardView): string {
     const r = view.ranks;
     line = `You: #${r.week ?? '–'} this week · #${r.allTime ?? '–'} all time`;
   } else if (!entries.length) line = view.period === 'week' ? 'No scores yet this week. Be the first!' : 'No scores yet. Be the first!';
-  return `<table class="scores board"><caption>${title}</caption>${head}${rows.join('')}</table><p class="rankline">${line}</p>`;
+  const st = view.status === 'ok' ? view.data?.stats?.[view.period] : undefined;
+  const count = (n: number, one: string, many: string) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
+  const stats = st ? `${count(st.started, 'game', 'games')} started · ${count(st.names, 'player', 'players')}` : '&nbsp;';
+  return (
+    `<table class="scores board"><caption>${title}</caption>${head}${rows.join('')}</table>` +
+    `<p class="rankline">${line}</p><p class="boardstats">${stats}</p>`
+  );
 }
 
 function periodChoice(view: BoardView) {
