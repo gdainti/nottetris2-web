@@ -1,3 +1,4 @@
+import { ROTATIONS, type Rotation } from './field';
 import { PIECE_ORDERS, type PieceOrder } from './pieces';
 
 export type GameMode = 'cut' | 'versus' | 'online';
@@ -22,6 +23,8 @@ export interface Settings {
   attacks: boolean;
   /** How the next piece is chosen, 7-bag or fully random (online, the host's setting counts) */
   pieces: PieceOrder;
+  /** Free (turn to any angle) or classic (quarter turns); each player's own, also online */
+  rotation: Rotation;
 }
 
 export type TouchControls = 'drag' | 'buttons';
@@ -51,6 +54,7 @@ const DEFAULT_SETTINGS: Settings = {
   moveSide: 'left',
   attacks: true,
   pieces: 'bag',
+  rotation: 'free',
 };
 
 function read<T>(key: string): T | null {
@@ -78,6 +82,7 @@ export function loadSettings(): Settings {
   if (!MOVE_SIDES.includes(s.moveSide)) s.moveSide = DEFAULT_SETTINGS.moveSide;
   if (typeof s.attacks !== 'boolean') s.attacks = DEFAULT_SETTINGS.attacks;
   if (!PIECE_ORDERS.includes(s.pieces)) s.pieces = DEFAULT_SETTINGS.pieces;
+  if (!ROTATIONS.includes(s.rotation)) s.rotation = DEFAULT_SETTINGS.rotation;
   return s;
 }
 
