@@ -55,7 +55,7 @@ const MODES: GameMode[] = ['cut', 'versus', 'online'];
 const MODE_NAMES: Record<GameMode, string> = { cut: 'Cut', versus: 'Versus', online: 'Online' };
 const THEMES: ThemeName[] = ['modern', 'retro'];
 const THEME_NAMES: Record<ThemeName, string> = { modern: 'Modern', retro: 'Retro' };
-const ROTATION_NAMES: Record<Rotation, string> = { free: 'Free', classic: 'Classic' };
+const ROTATION_NAMES: Record<Rotation, string> = { free: 'Free', quarter: '90°' };
 const PIECE_ORDER_NAMES: Record<PieceOrder, string> = { bag: '7-bag', random: 'Random' };
 const isCoarse = window.matchMedia('(pointer: coarse)').matches;
 
@@ -220,8 +220,8 @@ function modeInfo(mode: GameMode): string {
       ? 'Pieces: 7-bag. All seven come once each, shuffled, before any comes again, so never more than two of a kind in a row.'
       : 'Pieces: random. Any piece can come next, even the same one many times in a row.'
   }</p>`;
-  if (settings.rotation === 'classic') {
-    out += `<p class="info">Rotation: classic. Each press turns the falling piece a quarter turn, and it stays square until it lands. No T-spins.</p>`;
+  if (settings.rotation === 'quarter') {
+    out += `<p class="info">Rotation: 90°. Each press turns the falling piece a quarter turn, and it stays square until it lands. No T-spins.</p>`;
   }
   if (mode !== 'cut' && settings.attacks) {
     out += `<p class="info">Attacks: cutting rows sends the other player single blocks. They blink at the top of their column, then drop between pieces once a whole piece has landed. Cut rows of your own first to cancel them.</p>`;
@@ -425,14 +425,14 @@ function modeScreen(focus?: number) {
 }
 
 /**
- * Sets Free or Classic rotation, for the game being played too. On touch screens each brings its
- * own default layout, Buttons for Classic (a tap is a quarter turn) and the joystick and spin slider
+ * Sets Free or 90° rotation, for the game being played too. On touch screens each brings its
+ * own default layout, Buttons for 90° (a tap is a quarter turn) and the joystick and spin slider
  * for Free; Touch controls in Options can still change it afterwards.
  */
 function setRotation(r: Rotation) {
   if (r === settings.rotation) return;
   settings.rotation = r;
-  settings.touchControls = r === 'classic' ? 'buttons' : 'drag';
+  settings.touchControls = r === 'quarter' ? 'buttons' : 'drag';
   saveSettings(settings);
   applyTouchLayout();
   if (game) for (const f of game.type === 'versus' ? game.fields : [game.field]) f.rotation = r;

@@ -23,7 +23,7 @@ export interface Settings {
   attacks: boolean;
   /** How the next piece is chosen, 7-bag or fully random (online, the host's setting counts) */
   pieces: PieceOrder;
-  /** Free (turn to any angle) or classic (quarter turns); each player's own, also online */
+  /** Free (turn to any angle) or 90° (quarter turns); each player's own, also online */
   rotation: Rotation;
 }
 
