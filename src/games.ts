@@ -1,6 +1,6 @@
 import { audio } from './audio';
 import * as C from './config';
-import { Field, type FieldEvent, NO_CONTROLS } from './field';
+import { Field, type FieldEvent, NO_CONTROLS, type Rotation } from './field';
 import { singleControls, versusControls } from './input';
 import { FieldEncoder, RemoteField, SEND_INTERVAL, type StateMsg } from './online';
 import { MIRROR, type PieceOrder, pieceSequence, seededKinds } from './pieces';
@@ -72,8 +72,9 @@ export class SingleGame {
   constructor(
     private onOver: () => void,
     pieces: PieceOrder = 'bag',
+    rotation: Rotation = 'free',
   ) {
-    this.field = new Field({ pickKind: pieceSequence(pieces), emit: (e) => this.onEvent(e) });
+    this.field = new Field({ pickKind: pieceSequence(pieces), emit: (e) => this.onEvent(e), rotation });
     this.best = highScores()[0]?.score ?? 0;
   }
 
@@ -177,6 +178,7 @@ export class VersusGame {
     /** Cutting rows sends the other player blocks (Field.receiveAttack) */
     attacks = false,
     pieces: PieceOrder = 'bag',
+    rotation: Rotation = 'free',
   ) {
     // Both players get the same sequence; player 1 gets every piece mirrored (as in the original).
     const next = pieceSequence(pieces);
@@ -190,8 +192,8 @@ export class VersusGame {
     };
     const attack = (to: 0 | 1) => (attacks ? (blocks: number) => this.fields[to].receiveAttack(blocks) : undefined);
     this.fields = [
-      new Field({ pickKind: picker(0), emit: (e) => this.onEvent(0, e), attack: attack(1) }),
-      new Field({ pickKind: picker(1), emit: (e) => this.onEvent(1, e), attack: attack(0) }),
+      new Field({ pickKind: picker(0), emit: (e) => this.onEvent(0, e), attack: attack(1), rotation }),
+      new Field({ pickKind: picker(1), emit: (e) => this.onEvent(1, e), attack: attack(0), rotation }),
     ];
   }
 
@@ -350,8 +352,11 @@ export class OnlineGame {
     attacks = false,
     /** The room's setting: how the next piece is chosen */
     pieces: PieceOrder = 'random',
+    /** This player's own setting: the other player's pieces arrive as positions, whatever theirs is */
+    rotation: Rotation = 'free',
   ) {
     this.field = new Field({
+      rotation,
       pickKind: seededKinds(seed, pieces),
       emit: (e) => this.onEvent(e),
       attack: attacks ? (blocks) => this.send({ t: 'attack', n: blocks }) : undefined,

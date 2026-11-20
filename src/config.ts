@@ -15,6 +15,12 @@ export const DOWN_FORCE = 20; // N   (blockdownforce = 20*meter)
 export const TORQUE = 70; // N·m (blocktorque = 70*meter*meter)
 export const MAX_SPIN = 3; // rad/s, torque only applied below this
 export const SPIN_EASE = 1; // rad/s: the analog spin control eases off its torque within this of its target
+// Classic rotation (Settings.rotation): each press turns the falling piece a quarter turn, which it
+// swings through at up to CLASSIC_SPIN and then holds, instead of spinning freely under torque.
+export const CLASSIC_SPIN = 15; // rad/s, a quarter turn takes about 0.1 s
+export const CLASSIC_GAIN = 20; // 1/s, angular speed per radian still to turn
+export const CLASSIC_PRESS = 0.5; // the touch spin slider presses past this far out of 1...
+export const CLASSIC_RELEASE = 0.25; // ...and lets go again back inside this
 export const BASE_SPEED = 100; // px/s fall speed at level 0
 export const SPEED_PER_LEVEL = 7; // px/s per level
 export const MAX_DROP_SPEED = 500; // px/s while holding down

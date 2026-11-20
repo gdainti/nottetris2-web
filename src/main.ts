@@ -23,6 +23,7 @@ import {
   TOUCH_CONTROLS,
 } from './storage';
 import { Menu, esc } from './ui';
+import { ROTATIONS, type Rotation } from './field';
 import { PIECE_ORDERS, type PieceOrder } from './pieces';
 
 /** package.json's version, injected by vite.config.ts. */
@@ -54,6 +55,7 @@ const MODES: GameMode[] = ['cut', 'versus', 'online'];
 const MODE_NAMES: Record<GameMode, string> = { cut: 'Cut', versus: 'Versus', online: 'Online' };
 const THEMES: ThemeName[] = ['modern', 'retro'];
 const THEME_NAMES: Record<ThemeName, string> = { modern: 'Modern', retro: 'Retro' };
+const ROTATION_NAMES: Record<Rotation, string> = { free: 'Free', classic: 'Classic' };
 const PIECE_ORDER_NAMES: Record<PieceOrder, string> = { bag: '7-bag', random: 'Random' };
 const isCoarse = window.matchMedia('(pointer: coarse)').matches;
 
@@ -210,7 +212,7 @@ function modeInfo(mode: GameMode): string {
   const text: Record<GameMode, string> = {
     cut: 'Endless. A row is sliced out when it holds 8.1 blocks’ worth of area, cutting right through the pieces. Tighter rows score more. Every 10 rows the pieces fall faster.',
     versus: 'Two players, one keyboard (or two gamepads). Same pieces, mirrored for player 1, and rows are cut as in Cut. Whoever tops out first loses, and the game ends for both.',
-    online: 'Two players, each on their own device. Create a game and tell the other player its code, or join theirs with the code they give you. Same pieces for both; whoever tops out first loses, and the round ends for both. Pieces and Attacks: the setting of whoever creates the game counts.',
+    online: 'Two players, each on their own device. Create a game and tell the other player its code, or join theirs with the code they give you. Same pieces for both; whoever tops out first loses, and the round ends for both. Pieces and Attacks: the setting of whoever creates the game counts; Rotation is each player’s own.',
   };
   let out = `<p class="info">${text[mode]}</p>`;
   out += `<p class="info">${
@@ -218,6 +220,9 @@ function modeInfo(mode: GameMode): string {
       ? 'Pieces: 7-bag. All seven come once each, shuffled, before any comes again, so never more than two of a kind in a row.'
       : 'Pieces: random. Any piece can come next, even the same one many times in a row.'
   }</p>`;
+  if (settings.rotation === 'classic') {
+    out += `<p class="info">Rotation: classic. Each press turns the falling piece a quarter turn, and it stays square until it lands. No T-spins.</p>`;
+  }
   if (mode !== 'cut' && settings.attacks) {
     out += `<p class="info">Attacks: cutting rows sends the other player single blocks. They blink at the top of their column, then drop between pieces once a whole piece has landed. Cut rows of your own first to cancel them.</p>`;
   }
@@ -400,6 +405,16 @@ function modeScreen(focus?: number) {
       },
       {
         type: 'choice',
+        label: 'Rotation',
+        options: ROTATIONS.map((r) => ROTATION_NAMES[r]),
+        get: () => ROTATIONS.indexOf(settings.rotation),
+        set: (i) => {
+          settings.rotation = ROTATIONS[i];
+          saveSettings(settings);
+        },
+      },
+      {
+        type: 'choice',
         label: 'Music',
         options: [...TRACKS.map((t) => t.name), 'Off'],
         get: () => (settings.track < 0 ? TRACKS.length : settings.track),
@@ -411,7 +426,7 @@ function modeScreen(focus?: number) {
       },
       { type: 'button', label: 'Start', action: () => (settings.mode === 'online' ? showOnline() : startGame()), primary: true },
     ],
-    initial: focus ?? (versus ? 4 : 3),
+    initial: focus ?? (versus ? 5 : 4),
     html: () => modeInfo(settings.mode),
     onBack: showTitle,
     backButton: true,
@@ -519,11 +534,11 @@ function startGame() {
   suppressHeldKeys();
   if (settings.mode === 'versus') {
     audio.stopMusic();
-    game = new VersusGame(startMusic, showVersusResults, settings.attacks, settings.pieces);
+    game = new VersusGame(startMusic, showVersusResults, settings.attacks, settings.pieces, settings.rotation);
     report({ type: 'start', mode: 'versus' });
   } else {
     session = startSession(playerId()).catch(() => undefined);
-    game = new SingleGame(onSingleOver, settings.pieces);
+    game = new SingleGame(onSingleOver, settings.pieces, settings.rotation);
     game.start();
     startMusic(true);
     report({ type: 'start', mode: 'cut' });
@@ -941,7 +956,7 @@ function startOnline(seed: number, round: number, attacks: boolean, pieces: Piec
   audio.unlock();
   audio.stopMusic();
   suppressHeldKeys();
-  const g = new OnlineGame(seed, m.wins, (msg) => m.socket.send(msg), startMusic, showOnlineResults, attacks, pieces);
+  const g = new OnlineGame(seed, m.wins, (msg) => m.socket.send(msg), startMusic, showOnlineResults, attacks, pieces, settings.rotation);
   game = g;
   m.socket.on = {
     state: (s) => g.receive(s),
