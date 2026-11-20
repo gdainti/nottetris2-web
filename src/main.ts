@@ -1,3 +1,5 @@
+// The Retro theme's pixel font, served from here; browsers only download it once something uses it
+import '@fontsource/tiny5/400.css';
 import './style.css';
 import { audio, TRACKS } from './audio';
 import { STEP } from './config';
@@ -5,7 +7,7 @@ import { Demo } from './demo';
 import { logoHtml } from './logo';
 import { H, OnlineGame, SINGLE_W, SingleGame, VersusGame } from './games';
 import { clearTouch, pollPadPresses, setTouch, setTouchMove, setTouchSpin, suppressHeldKeys } from './input';
-import { COLORS, drawBackground, drawField, setTheme } from './render';
+import { COLORS, PIXEL_FONT_NAME, drawBackground, drawField, setTheme } from './render';
 import { ANON, type Boards, fetchBoards, NAME_MAX, normalizeName, recordGame, startSession, submitScore, type Submitted } from './api';
 import { CODE_LENGTH, type MatchError, MatchSocket, normalizeCode } from './net';
 import { report, reportSetting, type LeaveVia } from './events';
@@ -65,6 +67,9 @@ const isCoarse = window.matchMedia('(pointer: coarse)').matches;
 function applyTheme() {
   if (!THEMES.includes(settings.theme)) settings.theme = 'modern';
   setTheme(settings.theme);
+  // The canvas doesn't redraw text when a font arrives later, but the next frame picks it up; asking
+  // for it now means that is a frame away rather than whenever the menus first use it
+  if (settings.theme === 'retro') void document.fonts?.load(`16px ${PIXEL_FONT_NAME}`).catch(() => {});
   document.documentElement.dataset.theme = settings.theme;
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', COLORS.bg);
 }
