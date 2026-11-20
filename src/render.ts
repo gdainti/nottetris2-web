@@ -127,9 +127,6 @@ const RETRO_BLOCKS: string[][] = [
   ['00000000', '01111110', '01211210', '01122110', '01122110', '01211210', '01111110', '00000000'],
 ];
 
-/** The Retro theme's pixel font (@fontsource/tiny5, loaded in main.ts), as CSS names it. It has one weight. */
-export const PIXEL_FONT_NAME = 'Tiny5';
-
 const RETRO: Theme = {
   colors: {
     bg: '#b3b6a3',
@@ -154,7 +151,7 @@ const RETRO: Theme = {
   inner: 1,
   radius: 0,
   stroke: PIXEL,
-  font: `${PIXEL_FONT_NAME}, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", "Courier New", monospace`,
+  font: '"SF Mono", Menlo, Consolas, "DejaVu Sans Mono", "Courier New", monospace',
   pixel: {
     tones: [INK, DARK, MID, LIGHT, PALE],
     blocks: RETRO_BLOCKS,
