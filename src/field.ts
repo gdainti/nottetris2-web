@@ -31,9 +31,9 @@ export interface Controls {
   drop?: number;
 }
 
-/** free: rotate keys apply torque, so pieces turn to any angle; classic: each press turns a quarter turn */
-export type Rotation = 'free' | 'classic';
-export const ROTATIONS: Rotation[] = ['free', 'classic'];
+/** free: rotate keys apply torque, so pieces turn to any angle; quarter: each press turns a quarter turn */
+export type Rotation = 'free' | 'quarter';
+export const ROTATIONS: Rotation[] = ['free', 'quarter'];
 
 export const NO_CONTROLS: Controls = { left: false, right: false, down: false, rotL: false, rotR: false };
 
@@ -154,9 +154,9 @@ export class Field {
   /** The falling piece has made its T-spin: it can't make another */
   private spun = false;
   private _rotation: Rotation;
-  /** Classic rotation: the angle the falling piece turns to and holds */
+  /** 90° rotation: the angle the falling piece turns to and holds */
   private targetAngle = 0;
-  /** Classic rotation: which way rotate was held last step (-1, 0, 1), so holding it turns only once */
+  /** 90° rotation: which way rotate was held last step (-1, 0, 1), so holding it turns only once */
   private rotHeld = 0;
 
   constructor(opts: FieldOptions) {
@@ -283,8 +283,8 @@ export class Field {
    */
   private checkTSpin() {
     const p = this.active;
-    // Four presses would make one with classic rotation, so there it earns nothing
-    if (!p || p.kind !== T || this.spun || this._rotation === 'classic') return;
+    // Four presses would make one with 90° rotation, so there it earns nothing
+    if (!p || p.kind !== T || this.spun || this._rotation === 'quarter') return;
     if (Math.abs(p.body.getAngle()) < Math.PI * 2) return;
     this.spun = true;
     const add = C.TSPIN_POINTS;
@@ -402,8 +402,8 @@ export class Field {
   private applyControls(dt: number, k: Controls) {
     const body = this.active!.body;
     const spin = body.getAngularVelocity();
-    if (this._rotation === 'classic') {
-      this.classicRotate(k);
+    if (this._rotation === 'quarter') {
+      this.quarterRotate(k);
     } else if (k.spin !== undefined) {
       // Steer the spin towards the asked-for speed with up to the usual torque, so holding the
       // slider still (at 0) brakes the piece to a stop.
@@ -433,16 +433,16 @@ export class Field {
   }
 
   /**
-   * Classic rotation: a press (not a hold) of rotate turns the target a quarter turn, and the piece
+   * 90° rotation: a press (not a hold) of rotate turns the target a quarter turn, and the piece
    * is swung to it and held there. Knocks against the pile or walls can't tip it off square while
    * it falls; once it lands it is an ordinary body again. The touch slider presses when pushed far
    * enough to one side and must come back towards the middle before it presses again.
    */
-  private classicRotate(k: Controls) {
+  private quarterRotate(k: Controls) {
     let dir: number;
     if (k.spin !== undefined) {
       const a = Math.abs(k.spin);
-      dir = a >= C.CLASSIC_PRESS ? Math.sign(k.spin) : a > C.CLASSIC_RELEASE ? this.rotHeld : 0;
+      dir = a >= C.QUARTER_PRESS ? Math.sign(k.spin) : a > C.QUARTER_RELEASE ? this.rotHeld : 0;
     } else {
       dir = Number(k.rotR) - Number(k.rotL);
     }
@@ -451,7 +451,7 @@ export class Field {
 
     const body = this.active!.body;
     const err = this.targetAngle - body.getAngle();
-    body.setAngularVelocity(Math.max(-C.CLASSIC_SPIN, Math.min(C.CLASSIC_SPIN, err * C.CLASSIC_GAIN)));
+    body.setAngularVelocity(Math.max(-C.QUARTER_SPIN, Math.min(C.QUARTER_SPIN, err * C.QUARTER_GAIN)));
   }
 
   private endBlock() {

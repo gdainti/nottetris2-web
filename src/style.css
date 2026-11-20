@@ -67,7 +67,7 @@ body {
   display: none;
 }
 
-/* Retro look (Options → Graphics): four greys, pixel-art blocks, square corners, pixel-font type */
+/* Retro look (Options → Graphics): four greys, pixel-art blocks, square corners, monospace type */
 :root[data-theme='retro'] {
   --bg: #b3b6a3;
   --panel: rgba(224, 226, 210, 0.96);
@@ -80,10 +80,8 @@ body {
   --on-accent: #e0e2d2;
   --tint: 36, 38, 31;
   --glow: 36, 38, 31;
-  --font: Tiny5, 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Courier New', monospace;
+  --font: 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Courier New', monospace;
   color-scheme: light;
-  /* The pixel font has only one weight: smeared fake bold would blur its pixels */
-  font-synthesis-weight: none;
 }
 
 :root[data-theme='retro'] :is(.menu, .item, .opt, .back, .bar, .fill, .kbd, #pausebtn, #toast, .namefield input, #touch button, #spin, #stick, #stick .knob, #spin .knob) {
