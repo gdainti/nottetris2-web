@@ -153,7 +153,7 @@ export class Field {
   private dropTimer = 0;
   /** The falling piece has made its T-spin: it can't make another */
   private spun = false;
-  private rotation: Rotation;
+  private _rotation: Rotation;
   /** Classic rotation: the angle the falling piece turns to and holds */
   private targetAngle = 0;
   /** Classic rotation: which way rotate was held last step (-1, 0, 1), so holding it turns only once */
@@ -163,7 +163,7 @@ export class Field {
     this.pickKind = opts.pickKind;
     this.emit = opts.emit ?? (() => {});
     this.attack = opts.attack ?? null;
-    this.rotation = opts.rotation ?? 'free';
+    this._rotation = opts.rotation ?? 'free';
     this.left = 56;
     this.right = 384;
     this.nextKind = this.pickKind();
@@ -171,6 +171,18 @@ export class Field {
     this.world = new World({ gravity: Vec2(0, C.GRAVITY / PX) });
     this.buildWalls();
     this.world.on('begin-contact', (c: Contact) => this.onContact(c));
+  }
+
+  get rotation(): Rotation {
+    return this._rotation;
+  }
+
+  /** Changes rotation mid-game (from the pause menu): a falling piece squares up to its nearest quarter turn. */
+  set rotation(r: Rotation) {
+    this._rotation = r;
+    const angle = this.active?.body.getAngle() ?? 0;
+    this.targetAngle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
+    this.rotHeld = 0;
   }
 
   get width(): number {
@@ -272,7 +284,7 @@ export class Field {
   private checkTSpin() {
     const p = this.active;
     // Four presses would make one with classic rotation, so there it earns nothing
-    if (!p || p.kind !== T || this.spun || this.rotation === 'classic') return;
+    if (!p || p.kind !== T || this.spun || this._rotation === 'classic') return;
     if (Math.abs(p.body.getAngle()) < Math.PI * 2) return;
     this.spun = true;
     const add = C.TSPIN_POINTS;
@@ -390,7 +402,7 @@ export class Field {
   private applyControls(dt: number, k: Controls) {
     const body = this.active!.body;
     const spin = body.getAngularVelocity();
-    if (this.rotation === 'classic') {
+    if (this._rotation === 'classic') {
       this.classicRotate(k);
     } else if (k.spin !== undefined) {
       // Steer the spin towards the asked-for speed with up to the usual torque, so holding the

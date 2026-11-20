@@ -22,7 +22,7 @@ import {
   TABLE_SIZE,
   TOUCH_CONTROLS,
 } from './storage';
-import { Menu, esc } from './ui';
+import { Menu, esc, type ChoiceItem } from './ui';
 import { ROTATIONS, type Rotation } from './field';
 import { PIECE_ORDERS, type PieceOrder } from './pieces';
 
@@ -403,16 +403,7 @@ function modeScreen(focus?: number) {
           saveSettings(settings);
         },
       },
-      {
-        type: 'choice',
-        label: 'Rotation',
-        options: ROTATIONS.map((r) => ROTATION_NAMES[r]),
-        get: () => ROTATIONS.indexOf(settings.rotation),
-        set: (i) => {
-          settings.rotation = ROTATIONS[i];
-          saveSettings(settings);
-        },
-      },
+      rotationChoice(),
       {
         type: 'choice',
         label: 'Music',
@@ -433,7 +424,32 @@ function modeScreen(focus?: number) {
   });
 }
 
-function showOptions(back: () => void) {
+/**
+ * Sets Free or Classic rotation, for the game being played too. On touch screens each brings its
+ * own default layout, Buttons for Classic (a tap is a quarter turn) and the joystick and spin slider
+ * for Free; Touch controls in Options can still change it afterwards.
+ */
+function setRotation(r: Rotation) {
+  if (r === settings.rotation) return;
+  settings.rotation = r;
+  settings.touchControls = r === 'classic' ? 'buttons' : 'drag';
+  saveSettings(settings);
+  applyTouchLayout();
+  if (game) for (const f of game.type === 'versus' ? game.fields : [game.field]) f.rotation = r;
+}
+
+function rotationChoice(): ChoiceItem {
+  return {
+    type: 'choice',
+    label: 'Rotation',
+    options: ROTATIONS.map((r) => ROTATION_NAMES[r]),
+    get: () => ROTATIONS.indexOf(settings.rotation),
+    set: (i) => setRotation(ROTATIONS[i]),
+  };
+}
+
+/** `inGame`: opened from the pause menu, so it also offers Rotation for the game going on. */
+function showOptions(back: () => void, inGame = false) {
   menu.show({
     title: 'Options',
     items: [
@@ -487,6 +503,7 @@ function showOptions(back: () => void) {
           reportSetting('theme', was, settings.theme, { type: 'theme', theme: settings.theme });
         },
       },
+      ...(inGame ? [rotationChoice()] : []),
       // The on-screen controls only appear on touch screens, so only they get these settings.
       ...(isCoarse
         ? [
@@ -572,7 +589,7 @@ function pause() {
           startGame();
         },
       },
-      { type: 'button', label: 'Options', keys: ['KeyO'], keyLabel: 'O', action: () => showOptions(pauseMenuAgain) },
+      { type: 'button', label: 'Options', keys: ['KeyO'], keyLabel: 'O', action: () => showOptions(pauseMenuAgain, true) },
       {
         type: 'button',
         label: 'Quit to menu',
