@@ -435,8 +435,9 @@ export class OnlineGame {
     }
 
     this.time += dt;
-    if (this.frozen) return;
-    this.field.update(dt, this.phase === 'playing' && !this.inputOff ? singleControls() : NO_CONTROLS);
+    // A frozen field doesn't move, but the round's end still runs: the winner's field stays frozen
+    // until its fall-out starts, and only then the results come up
+    if (!this.frozen) this.field.update(dt, this.phase === 'playing' && !this.inputOff ? singleControls() : NO_CONTROLS);
 
     if (this.phase === 'ending') {
       this.endTimer += dt;
