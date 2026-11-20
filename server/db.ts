@@ -142,6 +142,22 @@ const MIGRATIONS = [
    CREATE INDEX session_by_time ON session (started_at);
    ALTER TABLE game ADD COLUMN session TEXT;
    CREATE UNIQUE INDEX game_by_session ON game (session) WHERE session IS NOT NULL;`,
+
+  // Every game started (one row per session), finished or not, kept after its session is used or
+  // dropped. Filled from what is known: each logged game started duration_ms before it ended, and
+  // each open session is a start. Games abandoned before this aren't known and don't count.
+  `CREATE TABLE game_start (
+     id         INTEGER PRIMARY KEY,
+     player     TEXT,
+     started_at INTEGER NOT NULL -- unix ms
+   );
+   INSERT INTO game_start (player, started_at)
+     SELECT player, started_at FROM (
+       SELECT player, created_at - duration_ms AS started_at FROM game
+       UNION ALL SELECT player, started_at FROM session
+     ) ORDER BY started_at;
+   CREATE INDEX game_start_by_time   ON game_start (started_at);
+   CREATE INDEX game_start_by_player ON game_start (player);`,
 ];
 
 /** A game session as taken (and so used up) by ScoreDb.takeSession. */
@@ -206,6 +222,14 @@ export interface GameTotals {
   avgScore: number;
 }
 
+/** Public counts shown with the leaderboard. */
+export interface BoardStats {
+  /** Games started, finished or not */
+  started: number;
+  /** Different names with a score on the board (not the shared ANON) */
+  names: number;
+}
+
 export class ScoreDb {
   readonly sql: DatabaseSync;
 
@@ -237,6 +261,7 @@ export class ScoreDb {
     this.sql.prepare('DELETE FROM session WHERE started_at <= ?').run(at.getTime() - SESSION_MAX_AGE_MS);
     const id = randomBytes(16).toString('hex');
     this.sql.prepare('INSERT INTO session (id, player, started_at) VALUES (?, ?, ?)').run(id, player, at.getTime());
+    this.sql.prepare('INSERT INTO game_start (player, started_at) VALUES (?, ?)').run(player, at.getTime());
     return id;
   }
 
@@ -400,6 +425,38 @@ export class ScoreDb {
          FROM game WHERE created_at >= ?`,
       )
       .get(since?.getTime() ?? 0) as unknown as GameTotals;
+  }
+
+  /** Games started and names on the board since `since` (or ever), for the leaderboard. */
+  boardStats(mode: Mode, since: Date | null): BoardStats {
+    const from = since?.getTime() ?? 0;
+    const { started } = this.sql.prepare('SELECT COUNT(*) AS started FROM game_start WHERE started_at >= ?').get(from) as {
+      started: number;
+    };
+    const { names } = this.sql
+      .prepare('SELECT COUNT(DISTINCT name) AS names FROM score WHERE mode = ? AND created_at >= ? AND name <> ?')
+      .get(mode, from, ANON) as { names: number };
+    return { started, names };
+  }
+
+  /**
+   * Player ids that started the most games since `since` (or ever), with the names they have
+   * submitted scores under, most used first (for the admin script; names are never public here).
+   */
+  topStarters(since: Date | null, limit: number) {
+    return this.sql
+      .prepare(
+        `SELECT s.player, s.started,
+                (SELECT COUNT(*) FROM game g WHERE g.player = s.player AND g.created_at >= ?1) AS finished,
+                (SELECT COALESCE(MAX(score), 0) FROM game g WHERE g.player = s.player AND g.created_at >= ?1) AS best,
+                (SELECT group_concat(name, ', ') FROM (SELECT name FROM player_name p WHERE p.player = s.player
+                                                       ORDER BY scores DESC, last_at DESC)) AS names,
+                s.last_at
+         FROM (SELECT player, COUNT(*) AS started, MAX(started_at) AS last_at FROM game_start
+               WHERE started_at >= ?1 AND player IS NOT NULL GROUP BY player) s
+         ORDER BY s.started DESC, s.last_at DESC LIMIT ?2`,
+      )
+      .all(since?.getTime() ?? 0, limit);
   }
 
   /** Games per UTC day since `since`, newest day first. */

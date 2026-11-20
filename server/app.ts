@@ -228,6 +228,7 @@ export function createApp(opts: AppOptions): AppServer {
       weekStart: since.toISOString(),
       week: db.board(mode, since, BOARD_SIZE),
       allTime: db.board(mode, null, BOARD_SIZE),
+      stats: { week: db.boardStats(mode, since), allTime: db.boardStats(mode, null) },
     };
   };
 

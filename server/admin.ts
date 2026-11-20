@@ -1,6 +1,7 @@
 // Leaderboard housekeeping and play statistics from the command line. In Docker:
 //
 //   docker exec slicefall node server/admin.ts stats [days]      games played: totals, then per day; online rounds
+//   docker exec slicefall node server/admin.ts top [n] [days]    players who started the most games, with their names
 //   docker exec slicefall node server/admin.ts games [n]         latest games, named or skipped
 //   docker exec slicefall node server/admin.ts matches [n]       latest online Versus rounds
 //   docker exec slicefall node server/admin.ts player <id>       names, games and online rounds of one player id (a prefix will do)
@@ -13,7 +14,7 @@
 import { ScoreDb } from './db.ts';
 import { normalizeName, weekStart } from './scores.ts';
 
-const [cmd, arg] = process.argv.slice(2);
+const [cmd, arg, arg2] = process.argv.slice(2);
 const db = new ScoreDb(process.env.DATABASE_URL || 'data/slicefall.db');
 
 /** Prints rows as a table, with the unix-ms *_at columns as ISO times. */
@@ -70,6 +71,7 @@ function stats(days: number) {
         return [
           label,
           {
+            started: db.boardStats('cut', since).started,
             games: t.games,
             submitted: t.named,
             unnamed: t.games - t.named,
@@ -113,6 +115,13 @@ switch (cmd) {
   case 'stats':
     stats(Number(arg) || 14);
     break;
+  case 'top': {
+    const days = Number(arg2);
+    const since = days > 0 ? new Date(Date.now() - days * 86_400_000) : null;
+    console.log(`Most games started, ${since ? `last ${days} days` : 'all time'} (finished = logged games):`);
+    fmt(db.topStarters(since, Number(arg) || 10).map((r) => ({ ...r, player: String(r.player).slice(0, 8), names: r.names ?? '(no name)' })));
+    break;
+  }
   case 'games':
     fmt(db.recentGames(Number(arg) || 20).map(gameRow));
     break;
@@ -144,7 +153,7 @@ switch (cmd) {
     console.log(`backed up to ${arg}`);
     break;
   default:
-    console.log('usage: node server/admin.ts stats [days] | games [n] | matches [n] | player <id> | recent [n] | name <NAME> | delete <id> | delete-name <NAME> | backup <file>');
+    console.log('usage: node server/admin.ts stats [days] | top [n] [days] | games [n] | matches [n] | player <id> | recent [n] | name <NAME> | delete <id> | delete-name <NAME> | backup <file>');
     process.exitCode = 1;
 }
 db.close();
