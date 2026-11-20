@@ -34,21 +34,39 @@ export interface GameRecord extends GameStats {
   bestCut: number;
   /** Random id the browser keeps in localStorage, so one player's games can be told apart; absent from older clients */
   player?: string;
+  /** The id POST /api/games/start gave when the game began; each one logs a single game */
+  session: string;
 }
 
-/** A player id: 32 lowercase hex digits (128 random bits). */
+/** A player id: 32 lowercase hex digits (128 random bits). Session ids look the same. */
 export const PLAYER_ID = /^[0-9a-f]{32}$/;
+export const SESSION_ID = PLAYER_ID;
+
+/**
+ * A game session lives this long from its start: a game must be logged by then. Long enough for any
+ * real game, paused ones included; unused ones are then dropped.
+ */
+export const SESSION_MAX_AGE_MS = 24 * 3600 * 1000;
+
+/**
+ * A game can't report more play than the time since its session started, by the server's clock.
+ * The game starts before the start request reaches the server, so allow that much more.
+ */
+export const SESSION_SLACK_MS = 10_000;
+
+const SESSION_ERROR = 'session must be the id from POST /api/games/start';
 
 const badPlayer = (player: unknown) => player !== undefined && (typeof player !== 'string' || !PLAYER_ID.test(player));
 const PLAYER_ERROR = 'player must be 32 lowercase hex digits';
 
-/** A leaderboard entry (POST /api/scores). */
-export interface Submission extends GameStats {
+/**
+ * A leaderboard entry (POST /api/scores): only a name and the session of a logged game. The numbers
+ * come from that game, as the server stored it, so a score can't claim more than its game did.
+ */
+export interface Submission {
+  mode: Mode;
   name: string;
-  /** The game-log row this score came from, so that row gets the player's name too */
-  gameId?: number;
-  /** The browser's random player id (see GameRecord), so the name can be tied to it */
-  player?: string;
+  session: string;
 }
 
 /** The shared name the game sends when the player leaves it blank (src/api.ts). Not tied to ids. */
@@ -72,7 +90,8 @@ const isInt = (v: unknown, min: number, max: number): v is number =>
 
 /**
  * Checks game numbers against what the game can actually produce. This stops typos and the
- * laziest fakes, not a determined cheat: the browser is trusted with the numbers.
+ * laziest fakes, not a determined cheat: the browser is trusted with the numbers. The session
+ * (see SESSION_SLACK_MS) also makes a fake take as long as the game it claims.
  *
  * - A T-spin is a falling T turning a full circle, once per piece, and pays 100. Older clients paid
  *   less for some (1 or 10), so allow 1 to 100 points each. A turn takes about 2 s at the top spin speed; allow 1 s.
@@ -110,7 +129,7 @@ function checkStats(b: Record<string, unknown>): Checked<GameStats> {
   return { ok: true, value: { mode, score, lines, level, pieces, durationMs, tSpins, tSpinPoints } };
 }
 
-/** A score for the leaderboard: a game that cut at least one row, plus a valid name. */
+/** A score for the leaderboard: a valid name and the session of a logged game. */
 export function validate(body: unknown): Checked<Submission> {
   if (!body || typeof body !== 'object') return { ok: false, error: 'expected a JSON object' };
   const b = body as Record<string, unknown>;
@@ -118,18 +137,8 @@ export function validate(body: unknown): Checked<Submission> {
   if (!MODES.includes(b.mode as Mode)) return { ok: false, error: 'mode must be "cut"' };
   const name = normalizeName(b.name);
   if (!name) return { ok: false, error: `name: 1–${NAME_MAX} letters, digits, spaces or . - _ ! ? '` };
-  if (!isInt(b.score, 1, 100_000_000)) return { ok: false, error: 'score must be a positive whole number' };
-  if (b.gameId !== undefined && !isInt(b.gameId, 1, Number.MAX_SAFE_INTEGER)) {
-    return { ok: false, error: 'gameId must be a positive whole number' };
-  }
-  if (badPlayer(b.player)) return { ok: false, error: PLAYER_ERROR };
-
-  const stats = checkStats(b);
-  if (!stats.ok) return stats;
-  const value: Submission = { ...stats.value, name };
-  if (b.gameId !== undefined) value.gameId = b.gameId as number;
-  if (b.player !== undefined) value.player = b.player as string;
-  return { ok: true, value };
+  if (typeof b.session !== 'string' || !SESSION_ID.test(b.session)) return { ok: false, error: SESSION_ERROR };
+  return { ok: true, value: { mode: b.mode as Mode, name, session: b.session } };
 }
 
 /**
@@ -151,10 +160,11 @@ export function validateGame(body: unknown): Checked<GameRecord> {
   const fits = cuts === 0 ? lines === 0 && bestCut === 0 : bestCut >= 1 && bestCut + cuts - 1 <= lines && cuts * bestCut >= lines;
   if (!fits) return { ok: false, error: 'cuts and bestCut do not match lines' };
 
-  const { player } = b;
+  const { player, session } = b;
   if (badPlayer(player)) return { ok: false, error: PLAYER_ERROR };
+  if (typeof session !== 'string' || !SESSION_ID.test(session)) return { ok: false, error: SESSION_ERROR };
 
-  return { ok: true, value: { ...stats.value, cuts, bestCut, ...(player !== undefined ? { player: player as string } : {}) } };
+  return { ok: true, value: { ...stats.value, cuts, bestCut, session, ...(player !== undefined ? { player: player as string } : {}) } };
 }
 
 /** Start of the current leaderboard week: Monday 00:00 UTC. */

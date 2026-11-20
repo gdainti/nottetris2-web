@@ -7,6 +7,8 @@ import { loadSettings, playerId, type ThemeName } from './storage';
 /** The owner's leaderboard name: a browser that plays under it reports nothing. */
 const OWNER = 'DEN';
 
+export type LeaveVia = 'page' | 'menu' | 'restart';
+
 export type GameEvent =
   | { type: 'start'; mode: 'cut' | 'versus' }
   | { type: 'start'; mode: 'online'; host: boolean; round: number }
@@ -14,6 +16,13 @@ export type GameEvent =
   /** winner: player 1 or 2, 0 for a draw */
   | { type: 'finish'; mode: 'versus'; scores: [number, number]; winner: 0 | 1 | 2 }
   | { type: 'finish'; mode: 'online'; host: boolean; round: number; you: number; them: number; win?: boolean }
+  /**
+   * The player left a game still going, and how far it had got. via: the page was closed, Quit to
+   * menu or Leave game, or Restart.
+   */
+  | { type: 'leave'; via: LeaveVia; mode: 'cut'; score: number; lines: number; level: number; durationMs: number }
+  | { type: 'leave'; via: LeaveVia; mode: 'versus'; scores: [number, number] }
+  | { type: 'leave'; via: LeaveVia; mode: 'online'; host: boolean; round: number; you: number }
   | { type: 'theme'; theme: ThemeName }
   | { type: 'sound'; muted: boolean }
   /** Volumes in percent */

@@ -6,9 +6,9 @@ import { logoHtml } from './logo';
 import { H, OnlineGame, SINGLE_W, SingleGame, VersusGame } from './games';
 import { clearTouch, pollPadPresses, setTouch, setTouchMove, setTouchSpin, suppressHeldKeys } from './input';
 import { COLORS, drawBackground, drawField, setTheme } from './render';
-import { ANON, type Boards, fetchBoards, NAME_MAX, normalizeName, recordGame, submitScore, type Submitted } from './api';
+import { ANON, type Boards, fetchBoards, NAME_MAX, normalizeName, recordGame, startSession, submitScore, type Submitted } from './api';
 import { CODE_LENGTH, type MatchError, MatchSocket, normalizeCode } from './net';
-import { report, reportSetting } from './events';
+import { report, reportSetting, type LeaveVia } from './events';
 import {
   type GameMode,
   type ThemeName,
@@ -507,6 +507,12 @@ function showOptions(back: () => void) {
   });
 }
 
+/**
+ * The server's session for the Cut game being played, asked for as it starts (without waiting for
+ * it). Undefined when the server couldn't be reached: the game plays on but can't be scored.
+ */
+let session: Promise<string | undefined> = Promise.resolve(undefined);
+
 function startGame() {
   menu.hide();
   audio.unlock();
@@ -516,6 +522,7 @@ function startGame() {
     game = new VersusGame(startMusic, showVersusResults, settings.attacks, settings.pieces);
     report({ type: 'start', mode: 'versus' });
   } else {
+    session = startSession(playerId()).catch(() => undefined);
     game = new SingleGame(onSingleOver, settings.pieces);
     game.start();
     startMusic(true);
@@ -540,9 +547,27 @@ function pause() {
     className: 'compact',
     items: [
       { type: 'button', label: 'Resume', keys: ['KeyP'], keyLabel: 'P', action: resume },
-      { type: 'button', label: 'Restart', keys: ['KeyR'], keyLabel: 'R', action: startGame },
+      {
+        type: 'button',
+        label: 'Restart',
+        keys: ['KeyR'],
+        keyLabel: 'R',
+        action: () => {
+          reportLeave('restart');
+          startGame();
+        },
+      },
       { type: 'button', label: 'Options', keys: ['KeyO'], keyLabel: 'O', action: () => showOptions(pauseMenuAgain) },
-      { type: 'button', label: 'Quit to menu', keys: ['KeyQ'], keyLabel: 'Q', action: showModeSelect },
+      {
+        type: 'button',
+        label: 'Quit to menu',
+        keys: ['KeyQ'],
+        keyLabel: 'Q',
+        action: () => {
+          reportLeave('menu');
+          showModeSelect();
+        },
+      },
     ],
     footer: 'Esc also resumes · M mute · F fullscreen',
     onBack: resume,
@@ -562,7 +587,16 @@ function confirmLeave() {
     className: 'compact',
     items: [
       { type: 'button', label: 'Keep playing', keyLabel: 'Esc', action: keepPlaying },
-      { type: 'button', label: 'Leave game', keys: ['KeyQ'], keyLabel: 'Q', action: () => showOnline() },
+      {
+        type: 'button',
+        label: 'Leave game',
+        keys: ['KeyQ'],
+        keyLabel: 'Q',
+        action: () => {
+          reportLeave('menu');
+          showOnline();
+        },
+      },
     ],
     onBack: keepPlaying,
   });
@@ -591,6 +625,23 @@ function resume() {
   updateTouch();
 }
 
+/**
+ * Reports leaving a game that is still going, with how far it got. A game over or a results screen
+ * has been reported already, and the menus clear `game`, so neither reports again.
+ */
+function reportLeave(via: LeaveVia) {
+  const g = game;
+  if (!g || state === 'gameover' || state === 'results') return;
+  if (g.type === 'single') {
+    const f = g.field;
+    report({ type: 'leave', via, mode: 'cut', score: f.score, lines: f.lines, level: f.level, durationMs: Math.round(g.elapsed * 1000) });
+  } else if (g.type === 'versus') {
+    report({ type: 'leave', via, mode: 'versus', scores: [g.fields[0].score, g.fields[1].score] });
+  } else if (match) {
+    report({ type: 'leave', via, mode: 'online', host: match.host, round: match.round, you: g.field.score });
+  }
+}
+
 /** Game over in Cut: log the game, ask for a name, then show where the score landed. */
 function onSingleOver() {
   const g = game as SingleGame;
@@ -607,12 +658,14 @@ function onSingleOver() {
     tSpinPoints: f.tSpinPoints,
   };
   report({ type: 'finish', mode: 'cut', score: stats.score, lines: stats.lines, level: stats.level, durationMs: stats.durationMs });
-  // Every finished game goes in the server's game log, even when the score is skipped. A failed
-  // request only costs the statistics, so it is ignored.
-  const gameId = recordGame({ ...stats, cuts: f.cuts, bestCut: f.bestCut, player: playerId() }).then(
-    (r) => r.id,
-    () => undefined,
-  );
+  // Every finished game goes in the server's game log, even when the score is skipped. The score
+  // then only names the logged game, so it needs the log to have worked.
+  const logged = session.then(async (s) => {
+    if (!s) throw new Error('No connection to the leaderboard');
+    await recordGame({ ...stats, cuts: f.cuts, bestCut: f.bestCut, player: playerId(), session: s });
+    return s;
+  });
+  logged.catch(() => {}); // a skipped score doesn't wait for it
   if (f.score <= 0) {
     showGameOver(g, fetchBoards(), -1);
     return;
@@ -628,8 +681,8 @@ function onSingleOver() {
       saveSettings(settings);
     }
     const localRank = personalBest ? addHighScore({ name: name ?? ANON, score: f.score }) : -1;
-    // Waits for the game log's id (usually back long before the name is typed) to link the two.
-    const request = gameId.then((id) => submitScore({ ...stats, name: name ?? ANON, gameId: id, player: playerId() }));
+    // Waits for the game to be logged (usually done long before the name is typed).
+    const request = logged.then((s) => submitScore({ name: name ?? ANON, session: s }));
     showGameOver(g, request, localRank, !name);
   };
   const submit = () => {
@@ -1037,6 +1090,9 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('blur', () => {
   if (game?.type !== 'online') pause();
 });
+
+// Closing the page (or navigating away) with a game still going
+window.addEventListener('pagehide', () => reportLeave('page'));
 
 // Keep the button from taking keyboard focus, so Space/Enter never "click" it again later.
 pauseBtn.addEventListener('pointerdown', (e) => e.preventDefault());

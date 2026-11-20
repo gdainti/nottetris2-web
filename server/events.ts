@@ -9,6 +9,9 @@ import { normalizeName, PLAYER_ID } from './scores.ts';
 export const THEMES = ['modern', 'retro'] as const;
 export type Theme = (typeof THEMES)[number];
 
+export const LEAVE_VIAS = ['page', 'menu', 'restart'] as const;
+export type LeaveVia = (typeof LEAVE_VIAS)[number];
+
 export type GameEvent =
   | { type: 'start'; mode: 'cut' | 'versus' }
   | { type: 'start'; mode: 'online'; host: boolean; round: number }
@@ -17,6 +20,13 @@ export type GameEvent =
   | { type: 'finish'; mode: 'versus'; scores: [number, number]; winner?: 0 | 1 | 2 }
   /** win: whether this player won the round; missing from older clients, which went by score */
   | { type: 'finish'; mode: 'online'; host: boolean; round: number; you: number; them: number; win?: boolean }
+  /**
+   * The player left a game still going, and how far it had got. via: the page was closed, Quit to
+   * menu or Leave game, or Restart.
+   */
+  | { type: 'leave'; via: LeaveVia; mode: 'cut'; score: number; lines: number; level: number; durationMs: number }
+  | { type: 'leave'; via: LeaveVia; mode: 'versus'; scores: [number, number] }
+  | { type: 'leave'; via: LeaveVia; mode: 'online'; host: boolean; round: number; you: number }
   | { type: 'theme'; theme: Theme }
   | { type: 'sound'; muted: boolean }
   /** Volumes in percent */
@@ -70,6 +80,28 @@ function checkEvent(b: Record<string, unknown>): GameEvent | string {
         return { type: 'finish', mode: 'online', host, round, you, them, ...(win === undefined ? {} : { win }) };
       }
       return 'mode must be cut, versus or online';
+    case 'leave': {
+      if (!LEAVE_VIAS.includes(b.via as LeaveVia)) return 'via must be page, menu or restart';
+      const via = b.via as LeaveVia;
+      if (b.mode === 'cut') {
+        const { score, lines, level, durationMs } = b;
+        if (!isInt(score, 0, SCORE_MAX) || !isInt(lines, 0, 100_000) || !isInt(level, 0, 10_000) || !isInt(durationMs, 0, 24 * 3600_000)) {
+          return 'cut leave needs score, lines, level and durationMs';
+        }
+        return { type: 'leave', via, mode: 'cut', score, lines, level, durationMs };
+      }
+      if (b.mode === 'versus') {
+        const s = b.scores;
+        if (!Array.isArray(s) || s.length !== 2 || !s.every((v) => isInt(v, 0, SCORE_MAX))) return 'versus leave needs two scores';
+        return { type: 'leave', via, mode: 'versus', scores: [s[0], s[1]] };
+      }
+      if (b.mode === 'online') {
+        const { host, round, you } = b;
+        if (typeof host !== 'boolean' || !isInt(round, 1, ROUND_MAX) || !isInt(you, 0, SCORE_MAX)) return 'online leave needs host, round and you';
+        return { type: 'leave', via, mode: 'online', host, round, you };
+      }
+      return 'mode must be cut, versus or online';
+    }
     case 'theme':
       if (!THEMES.includes(b.theme as Theme)) return 'theme must be modern or retro';
       return { type: 'theme', theme: b.theme as Theme };
@@ -99,6 +131,12 @@ function duration(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+const LEAVE_WORDS: Record<LeaveVia, string> = {
+  page: 'closed the page during',
+  menu: 'quit to the menu from',
+  restart: 'restarted, leaving',
+};
+
 const THEME_NAMES: Record<Theme, string> = { modern: 'Modern', retro: 'Retro' };
 
 /** The events-chat line for a report. Guests show as the start of their browser's random id. */
@@ -120,6 +158,14 @@ export function eventMessage({ event: e, name, player }: Reported): string {
       }
       const won = e.win ?? (e.you > e.them ? true : e.you < e.them ? false : null);
       return `🏁 ${who} ${won === true ? 'won' : won === false ? 'lost' : 'drew'} Online Versus round ${e.round} as ${e.host ? 'host' : 'guest'}: ${e.you} – ${e.them}`;
+    case 'leave': {
+      const how = LEAVE_WORDS[e.via];
+      if (e.mode === 'cut') {
+        return `🚪 ${who} ${how} a Cut game: ${e.score} points, ${e.lines} lines, level ${e.level}, ${duration(e.durationMs)}`;
+      }
+      if (e.mode === 'versus') return `🚪 ${who} ${how} a Versus game: ${e.scores[0]} – ${e.scores[1]}`;
+      return `🚪 ${who} ${how} Online Versus round ${e.round} as ${e.host ? 'host' : 'guest'}: ${e.you} points`;
+    }
     case 'theme':
       return `🎨 ${who} switched to the ${THEME_NAMES[e.theme]} theme`;
     case 'sound':

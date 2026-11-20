@@ -45,11 +45,16 @@ are one player. Each board lists every player's best score:
 - **All time**
 
 The server keeps the scores in SQLite (`data/slicefall.db`, `/data/slicefall.db` in Docker), using
-Node's built-in `node:sqlite`, so it has no npm dependencies at all. It checks that a score is one
-the game could produce (points per row, level and pieces must match the rows, a minimum time per
-piece) and allows 30 submissions per IP per 10 minutes. That stops typos
-and casual fakes, but the browser reports the score, so a determined cheat can still post a
-believable one. Remove those by hand:
+Node's built-in `node:sqlite`, so it has no npm dependencies at all. Only games the server saw
+start can be scored. Each Cut game asks for a session as it begins (`POST /api/games/start`), and at
+game over the game is logged against it. The session must be unused and less than a day old, and the game can't report more play than
+the server's clock says has passed since the session began (plus 10 s for the start request to
+arrive). A score then sends only a name and that session, and gets the numbers of the game the
+server logged, once. The server also checks that a game is one the field could produce (points per
+row, level and pieces must match the rows, a minimum time per piece) and allows 90 sessions, 60 games and
+30 scores per IP per 10 minutes. A fake now takes as long as the game it claims, but the browser
+still reports the numbers, so a determined cheat can still post a believable one. Remove those by
+hand:
 
 Every finished Cut game is also logged in a `game` table, whether the player submits the score or
 skips it (and games that scored nothing, where no name is asked). Each row keeps the score, lines,
@@ -80,8 +85,9 @@ docker exec slicefall node server/admin.ts delete-name ANN    # all of a player'
 | Endpoint                                  | Returns |
 | ----------------------------------------- | ------- |
 | `GET /api/leaderboard?mode=cut`           | `{ weekStart, week: [...], allTime: [...] }`, top 10 each |
-| `POST /api/games`                         | Takes `{ mode, score, lines, level, pieces, cuts, bestCut, durationMs, tSpins?, tSpinPoints?, player? }` at every game over; returns `{ id }`. `player` is the browser's random id, 32 lowercase hex digits |
-| `POST /api/scores`                        | Takes `{ mode, name, score, lines, level, pieces, durationMs, tSpins?, tSpinPoints?, gameId?, player? }`; returns the boards plus `weekRank` and `allTimeRank`. With `gameId`, that logged game gets the name (if it has the same `player`); with `player`, the name and id are recorded as a pair |
+| `POST /api/games/start`                   | Takes `{ player? }` as a Cut game begins; returns `{ session }`, 32 random hex digits. `player` is the browser's random id, 32 lowercase hex digits |
+| `POST /api/games`                         | Takes `{ mode, session, score, lines, level, pieces, cuts, bestCut, durationMs, tSpins?, tSpinPoints?, player? }` at every game over; returns `{ id }`. The session is used up, and must be from the same `player` |
+| `POST /api/scores`                        | Takes `{ mode, name, session }` for a logged game that scored; returns the boards plus `weekRank` and `allTimeRank`. The score has that game's numbers, and the game gets the name; with the game's `player`, the name and id are recorded as a pair |
 | `GET /healthz`                            | `ok` when the database answers |
 | `GET /api/match` (WebSocket)              | Online Versus rooms; see below |
 
