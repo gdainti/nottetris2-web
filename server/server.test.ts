@@ -195,8 +195,8 @@ describe('game starts', () => {
     scoreGame(db, 'BOB', { player: bob }, at);
     scoreGame(db, 'BOB', { player: bob }, at);
     scoreGame(db, 'INCOGNITO', {}, at); // the shared name isn't a player
-    assert.deepEqual(db.boardStats('cut', since), { started: 3, names: 1 });
-    assert.deepEqual(db.boardStats('cut', null), { started: 4, names: 2 });
+    assert.deepEqual(db.boardStats('cut', since), { started: 3, names: 1, lines: 12 }); // 4 lines a game
+    assert.deepEqual(db.boardStats('cut', null), { started: 4, names: 2, lines: 16 });
     db.close();
   });
 
@@ -442,7 +442,7 @@ interface Boards {
   weekStart: string;
   week: { name: string; score: number }[];
   allTime: { name: string; score: number }[];
-  stats: { week: { started: number; names: number }; allTime: { started: number; names: number } };
+  stats: { week: { started: number; names: number; lines: number }; allTime: { started: number; names: number; lines: number } };
 }
 
 test('migrating an old database drops Stack scores and keeps Cut ones', () => {
@@ -658,6 +658,7 @@ describe('http', () => {
     assert.equal(board.week[0].name, 'ZED');
     assert.ok(board.stats.allTime.started >= 1);
     assert.ok(board.stats.week.names >= 1);
+    assert.ok(board.stats.allTime.lines >= 4);
     assert.equal((await fetch(`${base}/api/leaderboard?mode=stack`)).status, 400);
   });
 

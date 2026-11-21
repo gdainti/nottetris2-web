@@ -228,6 +228,8 @@ export interface BoardStats {
   started: number;
   /** Different names with a score on the board (not the shared ANON) */
   names: number;
+  /** Rows cleared in every logged game, scored or not */
+  lines: number;
 }
 
 export class ScoreDb {
@@ -427,7 +429,7 @@ export class ScoreDb {
       .get(since?.getTime() ?? 0) as unknown as GameTotals;
   }
 
-  /** Games started and names on the board since `since` (or ever), for the leaderboard. */
+  /** Games started, lines cleared and names on the board since `since` (or ever), for the leaderboard. */
   boardStats(mode: Mode, since: Date | null): BoardStats {
     const from = since?.getTime() ?? 0;
     const { started } = this.sql.prepare('SELECT COUNT(*) AS started FROM game_start WHERE started_at >= ?').get(from) as {
@@ -436,7 +438,10 @@ export class ScoreDb {
     const { names } = this.sql
       .prepare('SELECT COUNT(DISTINCT name) AS names FROM score WHERE mode = ? AND created_at >= ? AND name <> ?')
       .get(mode, from, ANON) as { names: number };
-    return { started, names };
+    const { lines } = this.sql
+      .prepare('SELECT COALESCE(SUM(lines), 0) AS lines FROM game WHERE mode = ? AND created_at >= ?')
+      .get(mode, from) as { lines: number };
+    return { started, names, lines };
   }
 
   /**
