@@ -240,6 +240,35 @@ describe('game starts', () => {
   });
 });
 
+describe('stats page', () => {
+  const at = new Date('2026-11-18T12:00:00Z');
+
+  test('renders every section, with names escaped', async () => {
+    const { statsPage } = await import('./stats.ts');
+    const db = new ScoreDb(':memory:');
+    const player = 'cccc0000000000000000000000000000';
+    db.startSession(player, at);
+    db.startSession(player, at);
+    scoreGame(db, "<B&O'>", { player, score: 1234 }, at);
+    const html = statsPage(db, at);
+    for (const id of ['totals', 'charts', 'days', 'boards', 'names', 'players', 'games', 'online']) assert.match(html, new RegExp(`id="${id}"`));
+    assert.ok(!html.includes("<B&O'>"));
+    assert.match(html, /&lt;B&amp;O&#39;&gt;/);
+    assert.match(html, /cccc0000/);
+    db.close();
+  });
+
+  test('is off without a password', async () => {
+    const db = new ScoreDb(':memory:');
+    const app = createApp({ db, staticDir: null });
+    await new Promise<void>((r) => app.listen(0, '127.0.0.1', r));
+    const res = await fetch(`http://127.0.0.1:${(app.address() as AddressInfo).port}/all-stats`);
+    assert.equal(res.status, 404);
+    await new Promise((r) => app.close(r));
+    db.close();
+  });
+});
+
 describe('game log', () => {
   const at = new Date('2026-11-18T12:00:00Z');
   const game = (db: ScoreDb, id: number) => db.sql.prepare('SELECT name, score_id FROM game WHERE id = ?').get(id);
@@ -557,6 +586,8 @@ describe('http', () => {
       rateLimit: { max: 3, windowMs: 60_000 },
       gameRateLimit: { max: 4, windowMs: 60_000 },
       sessionRateLimit: { max: 6, windowMs: 60_000 },
+      statsPassword: 'hunter2',
+      statsRateLimit: { max: 2, windowMs: 60_000 },
       now: () => new Date(clock),
     });
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -605,6 +636,26 @@ describe('http', () => {
   /** A whole game, logged and scored under `name` from the address `ip`. */
   const scoreGame = async (name: string, ip = '10.0.0.1', over: Partial<GameRecord> = {}) =>
     post({ mode: 'cut', name, session: (await playGame(over, `${ip}0`)).session }, ip);
+
+  test('the stats page wants the password, then lists everything', async () => {
+    const basic = (pw: string, ip: string) => ({
+      Authorization: `Basic ${Buffer.from(`any:${pw}`).toString('base64')}`,
+      'X-Forwarded-For': ip,
+    });
+    const none = await fetch(`${base}/all-stats`);
+    assert.equal(none.status, 401);
+    assert.match(none.headers.get('www-authenticate') ?? '', /^Basic /);
+    assert.equal((await fetch(`${base}/all-stats`, { headers: basic('wrong', '10.9.9.9') })).status, 401);
+    assert.equal((await fetch(`${base}/all-stats`, { headers: basic('wrong', '10.9.9.9') })).status, 401);
+    assert.equal((await fetch(`${base}/all-stats`, { headers: basic('hunter2', '10.9.9.9') })).status, 429); // too many wrong tries
+    const ok = await fetch(`${base}/all-stats`, { headers: basic('hunter2', '10.9.9.8') });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.headers.get('cache-control'), 'no-store, private');
+    const html = await ok.text();
+    assert.match(html, /Slicefall stats/);
+    assert.match(html, /Games started/);
+    assert.match(html, /<svg/);
+  });
 
   test('health check', async () => {
     const r = await fetch(`${base}/healthz`);

@@ -65,7 +65,19 @@ can be followed whether or not they give a name (and `stats` counts the differen
 `devices`). It is 32 random hex digits and says nothing about who plays; clearing site data makes a
 new one. Submitted scores carry the id too, and a `player_name` table keeps each id and name pair
 (not the shared `INCOGNITO`) with how many scores and when it was first and last used, so one person's
-names and devices can be found from either side. Logging allows 60 games per IP per 10 minutes. To see how much the game is played:
+names and devices can be found from either side. Logging allows 60 games per IP per 10 minutes.
+
+Every game start is kept too (`game_start`), finished or not, so the leaderboard can show how many
+games were started and how many names are on it.
+
+**Stats page.** Set `STATS_PASSWORD` in `.env` and open `/all-stats`: the browser asks for the
+password (any user name). One page lists everything below with charts: totals, games started per
+day and by hour, devices, time played, score distribution, leaderboards, every name and player id,
+the latest games and online rounds. Nothing in the game links to it, it is never cached or
+indexed, and 10 wrong passwords from one address lock it out for 10 minutes. Without a password
+set it answers 404.
+
+The same numbers from the command line:
 
 ```sh
 docker exec slicefall node server/admin.ts stats              # games today, this week, all time; then per day; then online rounds
