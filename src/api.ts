@@ -34,6 +34,8 @@ export interface Boards {
 export interface BoardStats {
   started: number;
   names: number;
+  /** Lines cleared in all logged games; absent from an older server */
+  lines?: number;
 }
 
 export interface Submitted extends Boards {

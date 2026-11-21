@@ -315,7 +315,11 @@ function boardHtml(view: BoardView): string {
   } else if (!entries.length) line = view.period === 'week' ? 'No scores yet this week. Be the first!' : 'No scores yet. Be the first!';
   const st = view.status === 'ok' ? view.data?.stats?.[view.period] : undefined;
   const count = (n: number, one: string, many: string) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
-  const stats = st ? `${count(st.started, 'game', 'games')} started · ${count(st.names, 'player', 'players')}` : '&nbsp;';
+  const stats = st
+    ? [count(st.started, 'game', 'games'), st.lines === undefined ? '' : count(st.lines, 'line', 'lines'), count(st.names, 'player', 'players')]
+        .filter(Boolean)
+        .join(' · ')
+    : '&nbsp;';
   return (
     `<table class="scores board"><caption>${title}</caption>${head}${rows.join('')}</table>` +
     `<p class="rankline">${line}</p><p class="boardstats">${stats}</p>`
