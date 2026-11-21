@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, relative } from 'node:path';
@@ -8,6 +9,7 @@ import { eventMessage, validateEvent } from './events.ts';
 import { type MatchOptions, Matches } from './match.ts';
 import { type Notify, silent } from './notifier.ts';
 import { MODES, type Mode, PLAYER_ID, SESSION_SLACK_MS, validate, validateGame, weekStart } from './scores.ts';
+import { statsPage } from './stats.ts';
 import { acceptUpgrade, refuseUpgrade } from './ws.ts';
 
 export interface AppOptions {
@@ -26,6 +28,13 @@ export interface AppOptions {
   matchRateLimit?: { max: number; windowMs: number };
   /** Reports for the events chat (POST /api/events) allowed per IP per window. */
   eventRateLimit?: { max: number; windowMs: number };
+  /**
+   * Password for the /all-stats page (HTTP Basic auth, any user name). Without one the page is off
+   * and answers 404, like any unknown path.
+   */
+  statsPassword?: string;
+  /** Wrong /all-stats passwords allowed per IP per window. */
+  statsRateLimit?: { max: number; windowMs: number };
   /** Posts to the events chat (notifier.ts). Default: nothing is posted. */
   notify?: Notify;
   match?: MatchOptions;
@@ -203,6 +212,13 @@ export function createApp(opts: AppOptions): AppServer {
   // A game sends two reports (start and finish), so this allows about 30 games in 10 minutes. Past
   // that the reports are refused: they're only news for the chat, and the chat shouldn't flood.
   const eventLimit = rateLimiter(opts.eventRateLimit?.max ?? 60, opts.eventRateLimit?.windowMs ?? 10 * 60_000);
+  // Only wrong passwords count, so the owner can reload the page freely; past the limit an address
+  // is refused even with the right one, until the window has passed.
+  const statsMax = opts.statsRateLimit?.max ?? 10;
+  const statsWindow = opts.statsRateLimit?.windowMs ?? 10 * 60_000;
+  const statsFails = new Map<string, number[]>();
+  const recentFails = (ip: string, t: number) => (statsFails.get(ip) ?? []).filter((f) => t - f < statsWindow);
+  const statsKey = opts.statsPassword ? createHash('sha256').update(opts.statsPassword).digest() : null;
   const notify = opts.notify ?? silent;
   const matches = new Matches({
     ...opts.match,
@@ -329,6 +345,33 @@ export function createApp(opts: AppOptions): AppServer {
     }
 
     if (path.startsWith('/api/')) return json(res, 404, { error: 'not found' });
+
+    if (path === '/all-stats' && statsKey) {
+      if (!read) return send(res, 405, 'Method not allowed', { 'Content-Type': 'text/plain' });
+      const ip = rateKey(clientIp(req));
+      const t = now().getTime();
+      if (recentFails(ip, t).length >= statsMax) return send(res, 429, 'Too many tries, try again later', { 'Content-Type': 'text/plain' });
+      const auth = /^Basic (.+)$/i.exec(req.headers.authorization ?? '')?.[1];
+      const given = auth ? Buffer.from(auth, 'base64').toString('utf8').replace(/^[^:]*:/, '') : null;
+      // Hashed first so both sides have the same length for the constant-time compare.
+      const ok = given !== null && timingSafeEqual(createHash('sha256').update(given).digest(), statsKey);
+      if (!ok) {
+        if (given !== null) {
+          statsFails.set(ip, [...recentFails(ip, t), t]);
+          if (statsFails.size > 10_000) for (const [k] of statsFails) if (!recentFails(k, t).length) statsFails.delete(k);
+        }
+        return send(res, 401, 'Password needed', {
+          'Content-Type': 'text/plain',
+          'WWW-Authenticate': 'Basic realm="Slicefall stats", charset="UTF-8"',
+          'Cache-Control': 'no-store',
+        });
+      }
+      return send(res, 200, statsPage(db, now()), {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store, private',
+        'X-Robots-Tag': 'noindex, nofollow',
+      });
+    }
 
     if (!read) return send(res, 405, 'Method not allowed', { 'Content-Type': 'text/plain' });
     const file = files.get(path === '/' ? '/index.html' : path);

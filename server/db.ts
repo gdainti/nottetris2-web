@@ -459,6 +459,106 @@ export class ScoreDb {
       .all(since?.getTime() ?? 0, limit);
   }
 
+  /** Starts, logged games, devices and play per UTC day since `since`, oldest day first (for /all-stats). */
+  activityByDay(since: Date) {
+    return this.sql
+      .prepare(
+        `WITH s AS (SELECT date(started_at / 1000, 'unixepoch') AS day, COUNT(*) AS started,
+                           COUNT(DISTINCT player) AS devices
+                    FROM game_start WHERE started_at >= ?1 GROUP BY day),
+              g AS (SELECT date(created_at / 1000, 'unixepoch') AS day, COUNT(*) AS finished, COUNT(name) AS named,
+                           COALESCE(MAX(score), 0) AS best, ROUND(SUM(duration_ms) / 60000.0) AS minutes
+                    FROM game WHERE created_at >= ?1 GROUP BY day)
+         SELECT d.day, COALESCE(s.started, 0) AS started, COALESCE(s.devices, 0) AS devices,
+                COALESCE(g.finished, 0) AS finished, COALESCE(g.named, 0) AS named,
+                COALESCE(g.best, 0) AS best, COALESCE(g.minutes, 0) AS minutes
+         FROM (SELECT day FROM s UNION SELECT day FROM g) d
+         LEFT JOIN s USING (day) LEFT JOIN g USING (day) ORDER BY d.day`,
+      )
+      .all(since.getTime()) as {
+      day: string;
+      started: number;
+      devices: number;
+      finished: number;
+      named: number;
+      best: number;
+      minutes: number;
+    }[];
+  }
+
+  /** Games started per UTC hour of the day, ever (0-23; hours without any are left out). */
+  startsByHour() {
+    return this.sql
+      .prepare(
+        `SELECT CAST(strftime('%H', started_at / 1000, 'unixepoch') AS INTEGER) AS hour, COUNT(*) AS started
+         FROM game_start GROUP BY hour ORDER BY hour`,
+      )
+      .all() as { hour: number; started: number }[];
+  }
+
+  /** Different player ids (browsers) that have started or logged a game. */
+  deviceCount(): number {
+    return (
+      this.sql
+        .prepare(
+          `SELECT COUNT(*) AS n FROM (SELECT player FROM game_start WHERE player IS NOT NULL
+                                      UNION SELECT player FROM game WHERE player IS NOT NULL)`,
+        )
+        .get() as { n: number }
+    ).n;
+  }
+
+  /** Every logged game's score, for a histogram. */
+  allScores(): number[] {
+    return (this.sql.prepare('SELECT score FROM game').all() as { score: number }[]).map((r) => r.score);
+  }
+
+  /** Every player id seen, most recently active first, with what they did (for /all-stats). */
+  players(limit: number) {
+    return this.sql
+      .prepare(
+        `WITH ids AS (SELECT player FROM game_start WHERE player IS NOT NULL
+                      UNION SELECT player FROM game WHERE player IS NOT NULL)
+         SELECT ids.player,
+                (SELECT COUNT(*) FROM game_start s WHERE s.player = ids.player) AS started,
+                (SELECT COUNT(*) FROM game g WHERE g.player = ids.player) AS finished,
+                (SELECT COUNT(*) FROM game g WHERE g.player = ids.player AND g.score_id IS NOT NULL) AS scored,
+                (SELECT COALESCE(MAX(score), 0) FROM game g WHERE g.player = ids.player) AS best,
+                (SELECT COALESCE(SUM(duration_ms), 0) FROM game g WHERE g.player = ids.player) AS play_ms,
+                (SELECT COUNT(*) FROM match m WHERE m.host = ids.player OR m.guest = ids.player) AS online,
+                (SELECT group_concat(name, ', ') FROM (SELECT name FROM player_name p WHERE p.player = ids.player
+                                                       ORDER BY scores DESC, last_at DESC)) AS names,
+                MIN((SELECT MIN(started_at) FROM game_start s WHERE s.player = ids.player),
+                    COALESCE((SELECT MIN(created_at) FROM game g WHERE g.player = ids.player), 1e18)) AS first_at,
+                MAX((SELECT COALESCE(MAX(started_at), 0) FROM game_start s WHERE s.player = ids.player),
+                    COALESCE((SELECT MAX(created_at) FROM game g WHERE g.player = ids.player), 0)) AS last_at
+         FROM ids ORDER BY last_at DESC LIMIT ?`,
+      )
+      .all(limit) as {
+      player: string;
+      started: number;
+      finished: number;
+      scored: number;
+      best: number;
+      play_ms: number;
+      online: number;
+      names: string | null;
+      first_at: number;
+      last_at: number;
+    }[];
+  }
+
+  /** Every name on the board, best first: its scores and the player ids it came from (for /all-stats). */
+  names() {
+    return this.sql
+      .prepare(
+        `SELECT name, MAX(score) AS best, COUNT(*) AS scores, COUNT(DISTINCT player) AS devices,
+                MIN(created_at) AS first_at, MAX(created_at) AS last_at
+         FROM score GROUP BY name ORDER BY best DESC, first_at ASC`,
+      )
+      .all() as { name: string; best: number; scores: number; devices: number; first_at: number; last_at: number }[];
+  }
+
   /** Games per UTC day since `since`, newest day first. */
   gamesByDay(since: Date) {
     return this.sql
